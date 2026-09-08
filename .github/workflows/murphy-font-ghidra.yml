@@ -8,7 +8,8 @@ name: Murphy M3 OEM font Ghidra analysis
 #
 # 분석 대상: crosspoint-reader/Murphy 저장소에 이미 올라와 있는 공개 참조 OEM 펌웨어
 # (m3/oem_firmware/mofei-corogoo-touch-v525.bin) — 사용자의 개인 백업 파일(WiFi 비밀번호 등
-# 민감정보 포함)은 전혀 쓰지 않으므로 안전합니다.
+# 민감정보 포함)은 전혀 쓰지 않으므로 안전합니다. 이 참조 바이너리는 실제 app0와
+# 컴파일 타임스탬프/툴체인이 동일해 폰트 렌더링 코드도 사실상 동일할 가능성이 높습니다.
 
 on:
   workflow_dispatch: {}
@@ -89,7 +90,34 @@ jobs:
       - name: Decompile all functions to C-like pseudocode
         run: |
           cat > DecompileAll.py << 'PYEOF'
-          # (내용은 위와 동일 - 아래 첨부파일 참고)
+          from ghidra.app.decompiler import DecompInterface
+          from ghidra.util.task import ConsoleTaskMonitor
+          import os
+
+          args = getScriptArgs()
+          outdir = args[0] if len(args) > 0 else "/tmp/decompiled"
+          os.makedirs(outdir, exist_ok=True)
+
+          ifc = DecompInterface()
+          ifc.openProgram(currentProgram)
+          monitor = ConsoleTaskMonitor()
+
+          fm = currentProgram.getFunctionManager()
+          count = 0
+          for func in fm.getFunctions(True):
+              try:
+                  res = ifc.decompileFunction(func, 60, monitor)
+                  if res and res.decompileCompleted():
+                      code = res.getDecompiledFunction().getC()
+                      fname = func.getName().replace("/", "_")
+                      addr = func.getEntryPoint()
+                      path = os.path.join(outdir, "%s_%s.c" % (str(addr), fname))
+                      with open(path, "w") as f:
+                          f.write(code)
+                      count += 1
+              except Exception as e:
+                  print("skip %s: %s" % (func.getName(), e))
+          print("Decompiled %d functions to %s" % (count, outdir))
           PYEOF
           mkdir -p out/decompiled
           "${{ steps.ghidra.outputs.home }}/support/analyzeHeadless" \
@@ -104,5 +132,15 @@ jobs:
         run: |
           mkdir -p out/relevant
           grep -lriE "gbk|glyph|font|unicode|utf8|utf_8" out/decompiled/*.c > out/relevant/matches.txt || true
+          echo "Files mentioning font/GBK/glyph/unicode keywords:"
           cat out/relevant/matches.txt || echo "(none found)"
-          while
+          while read -r f; do
+            cp "$f" out/relevant/ 2>/dev/null || true
+          done < out/relevant/matches.txt
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: decompiled-output
+          path: out/
+          retention-days: 14
