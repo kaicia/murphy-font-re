@@ -35,19 +35,35 @@ jobs:
       - name: Download Ghidra
         if: steps.cache-ghidra.outputs.cache-hit != 'true'
         run: |
+          set -euxo pipefail
           mkdir -p ghidra_dist
           cd ghidra_dist
-          curl -L -o ghidra.zip \
+          curl -fL -o ghidra.zip \
             https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.1.2_build/ghidra_11.1.2_PUBLIC_20240709.zip
+          ls -la ghidra.zip
           unzip -q ghidra.zip
           rm ghidra.zip
+          echo "--- contents of ghidra_dist after extraction ---"
+          ls -la .
 
       - name: Locate Ghidra install dir
         id: ghidra
         run: |
-          GHIDRA_HOME=$(find "$PWD/ghidra_dist" -maxdepth 1 -type d -name "ghidra_*")
+          set -euxo pipefail
+          echo "--- ghidra_dist contents ---"
+          ls -la "$PWD/ghidra_dist" || true
+          MATCHES=$(find "$PWD/ghidra_dist" -maxdepth 1 -type d -name "ghidra_*")
+          COUNT=$(echo "$MATCHES" | grep -c . || true)
+          echo "Found $COUNT candidate(s):"
+          echo "$MATCHES"
+          if [ "$COUNT" -ne 1 ]; then
+            echo "!! Expected exactly one ghidra_* directory, found $COUNT. Failing early with debug info above."
+            exit 1
+          fi
+          GHIDRA_HOME="$MATCHES"
           echo "home=$GHIDRA_HOME" >> "$GITHUB_OUTPUT"
           echo "Ghidra home: $GHIDRA_HOME"
+          ls -la "$GHIDRA_HOME"
 
       - name: Checkout crosspoint-reader/Murphy (reference firmware + Xtensa plugin)
         run: |
