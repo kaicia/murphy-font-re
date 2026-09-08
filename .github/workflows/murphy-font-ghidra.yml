@@ -1,0 +1,108 @@
+name: Murphy M3 OEM font Ghidra analysis
+
+# 사용법:
+#  1. 이 파일을 본인 저장소의 .github/workflows/murphy-font-ghidra.yml 로 커밋
+#  2. GitHub 저장소 > Actions 탭 > "Murphy M3 OEM font Ghidra analysis" > Run workflow 클릭
+#  3. 끝나면 Actions 실행 결과 페이지 하단 Artifacts에서 decompiled-output.zip 다운로드
+#  4. 그 안의 .c 파일들(특히 font/glyph/GBK 관련 함수) 내용을 복사해서 Claude에게 붙여넣기
+#
+# 분석 대상: crosspoint-reader/Murphy 저장소에 이미 올라와 있는 공개 참조 OEM 펌웨어
+# (m3/oem_firmware/mofei-corogoo-touch-v525.bin) — 사용자의 개인 백업 파일(WiFi 비밀번호 등
+# 민감정보 포함)은 전혀 쓰지 않으므로 안전합니다.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  ghidra-analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache Ghidra download
+        id: cache-ghidra
+        uses: actions/cache@v4
+        with:
+          path: ghidra_dist
+          key: ghidra-11.1.2-PUBLIC
+
+      - name: Download Ghidra
+        if: steps.cache-ghidra.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ghidra_dist
+          cd ghidra_dist
+          curl -L -o ghidra.zip \
+            https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.1.2_build/ghidra_11.1.2_PUBLIC_20240709.zip
+          unzip -q ghidra.zip
+          rm ghidra.zip
+
+      - name: Locate Ghidra install dir
+        id: ghidra
+        run: |
+          GHIDRA_HOME=$(find "$PWD/ghidra_dist" -maxdepth 1 -type d -name "ghidra_*")
+          echo "home=$GHIDRA_HOME" >> "$GITHUB_OUTPUT"
+          echo "Ghidra home: $GHIDRA_HOME"
+
+      - name: Checkout crosspoint-reader/Murphy (reference firmware + Xtensa plugin)
+        run: |
+          git clone --depth 1 https://github.com/crosspoint-reader/Murphy.git murphy-re
+
+      - name: Install prebuilt Xtensa processor extension
+        run: |
+          EXT_ZIP=$(find murphy-re/tools -iname "*xtensa*.zip" | head -n1)
+          if [ -z "$EXT_ZIP" ]; then
+            echo "!! Could not find a prebuilt Xtensa extension zip under murphy-re/tools"
+            echo "!! Listing tools/ contents for debugging:"
+            find murphy-re/tools -maxdepth 3
+            exit 1
+          fi
+          echo "Found extension: $EXT_ZIP"
+          unzip -q -o "$EXT_ZIP" -d "${{ steps.ghidra.outputs.home }}/Ghidra/Extensions/"
+
+      - name: List available processor languages (sanity check)
+        run: |
+          "${{ steps.ghidra.outputs.home }}/support/analyzeHeadless" \
+            /tmp throwaway_project -deleteProject \
+            -preScript ListLanguages.java || true
+
+      - name: Run headless import + auto-analysis
+        run: |
+          BIN=murphy-re/m3/oem_firmware/mofei-corogoo-touch-v525.bin
+          if [ ! -f "$BIN" ]; then
+            echo "Reference binary not found at $BIN, listing oem_firmware/:"
+            find murphy-re/m3/oem_firmware
+            exit 1
+          fi
+          mkdir -p out
+          "${{ steps.ghidra.outputs.home }}/support/analyzeHeadless" \
+            "$PWD/ghidra_proj" MurphyFont \
+            -import "$BIN" \
+            -processor "Xtensa:LE:32:default" \
+            -log out/import_analysis.log \
+            -scriptlog out/script.log
+
+      - name: Decompile all functions to C-like pseudocode
+        run: |
+          cat > DecompileAll.py << 'PYEOF'
+          # (내용은 위와 동일 - 아래 첨부파일 참고)
+          PYEOF
+          mkdir -p out/decompiled
+          "${{ steps.ghidra.outputs.home }}/support/analyzeHeadless" \
+            "$PWD/ghidra_proj" MurphyFont \
+            -process "mofei-corogoo-touch-v525.bin" \
+            -noanalysis \
+            -scriptPath "$PWD" \
+            -postScript DecompileAll.py "$PWD/out/decompiled" \
+            -log out/decompile.log
+
+      - name: Grep for font/GBK-related functions specifically
+        run: |
+          mkdir -p out/relevant
+          grep -lriE "gbk|glyph|font|unicode|utf8|utf_8" out/decompiled/*.c > out/relevant/matches.txt || true
+          cat out/relevant/matches.txt || echo "(none found)"
+          while
