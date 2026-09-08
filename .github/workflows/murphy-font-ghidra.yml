@@ -52,7 +52,7 @@ jobs:
           set -euxo pipefail
           echo "--- ghidra_dist contents ---"
           ls -la "$PWD/ghidra_dist" || true
-          MATCHES=$(find "$PWD/ghidra_dist" -maxdepth 1 -type d -name "ghidra_*")
+          MATCHES=$(find "$PWD/ghidra_dist" -mindepth 1 -maxdepth 1 -type d -name "ghidra_*")
           COUNT=$(echo "$MATCHES" | grep -c . || true)
           echo "Found $COUNT candidate(s):"
           echo "$MATCHES"
