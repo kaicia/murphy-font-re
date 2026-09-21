@@ -12,8 +12,12 @@ import com.kaicia.txt2epub.core.FileNamer
 import com.kaicia.txt2epub.core.MetaScanner
 import com.kaicia.txt2epub.core.TextReader
 import com.kaicia.txt2epub.data.Prefs
+import com.kaicia.txt2epub.net.CoverSearch
 import com.kaicia.txt2epub.net.MetadataLookup
+import com.kaicia.txt2epub.net.Http
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,6 +49,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val coverBytes: ByteArray? = null,
         val coverMime: String = "image/jpeg",
 
+        val coverResults: List<CoverItem> = emptyList(),
+        val coverBusy: Boolean = false,
+        val coverNote: String = "",
+
         val template: String = Prefs.DEFAULT_TEMPLATE,
         val space: FileNamer.SpaceMode = FileNamer.SpaceMode.KEEP,
         val case: FileNamer.CaseMode = FileNamer.CaseMode.KEEP,
@@ -68,6 +76,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             get() = if (!splitEnabled || splitSize <= 0) 1
             else (chapters.size + splitSize - 1) / splitSize.coerceAtLeast(1)
     }
+
+    /** 표지 후보. [thumb]은 목록에 그릴 작은 그림으로, 받아지는 대로 채워진다. */
+    data class CoverItem(val cover: CoverSearch.Cover, val thumb: ByteArray? = null)
 
     private val prefs = Prefs(app)
 
@@ -414,6 +425,95 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.value = _ui.value.copy(error = "표지를 읽지 못했습니다: ${e.message}")
             }
         }
+    }
+
+    /**
+     * 웹에서 표지 후보를 찾아 목록으로 보여준다.
+     *
+     * 썸네일은 찾자마자 한꺼번에 받는다. 12장이라 부담이 크지 않고,
+     * 한 장씩 늦게 뜨는 것보다 고르기 편하다.
+     */
+    fun searchCovers() {
+        val s = _ui.value
+        val q = s.title.ifBlank { s.fileName.substringBeforeLast('.', "") }.trim()
+        if (q.isEmpty()) {
+            _ui.value = s.copy(coverNote = "먼저 제목을 입력하세요.")
+            return
+        }
+        _ui.value = s.copy(coverBusy = true, coverNote = "표지를 찾는 중…", coverResults = emptyList())
+
+        viewModelScope.launch {
+            val found = runCatching {
+                CoverSearch.search(q, s.author, s.naverId, s.naverSecret)
+            }.getOrDefault(emptyList())
+
+            // 서지 조회에서 이미 받아둔 대표 이미지도 후보에 넣는다
+            val extra = s.lookupResults
+                .filter { it.coverUrl.isNotBlank() }
+                .map {
+                    CoverSearch.Cover(
+                        source = it.source, title = it.title,
+                        thumbUrl = CoverSearch.https(it.coverUrl),
+                        fullUrl = CoverSearch.https(it.coverUrl)
+                    )
+                }
+            val all = CoverSearch.dedupe(found + extra).take(CoverSearch.MAX)
+
+            if (all.isEmpty()) {
+                _ui.value = _ui.value.copy(
+                    coverBusy = false,
+                    coverNote = "표지를 찾지 못했습니다. 제목을 다르게 넣거나 기기에서 직접 고르세요."
+                )
+                return@launch
+            }
+
+            _ui.value = _ui.value.copy(
+                coverResults = all.map { CoverItem(it) },
+                coverNote = "${all.size}장 중에서 고르세요."
+            )
+
+            val withThumbs = withContext(Dispatchers.IO) {
+                all.map { c ->
+                    async { CoverItem(c, runCatching { Http.image(c.thumbUrl)?.first }.getOrNull()) }
+                }.awaitAll()
+            }
+            _ui.value = _ui.value.copy(
+                coverBusy = false,
+                coverResults = withThumbs.filter { it.thumb != null },
+                coverNote = withThumbs.count { it.thumb != null }
+                    .let { if (it == 0) "표지를 받지 못했습니다." else "$it 장 중에서 고르세요." }
+            )
+        }
+    }
+
+    /** 고른 후보를 큰 그림으로 다시 받아 표지로 쓴다. */
+    fun useCover(item: CoverItem) {
+        _ui.value = _ui.value.copy(coverNote = "표지를 받는 중…")
+        viewModelScope.launch {
+            val got = runCatching { CoverSearch.download(item.cover) }.getOrNull()
+            if (got == null) {
+                // 큰 그림이 막히면 이미 받아둔 썸네일이라도 쓴다
+                val thumb = item.thumb
+                if (thumb != null) {
+                    _ui.value = _ui.value.copy(
+                        coverBytes = thumb, coverMime = "image/jpeg",
+                        coverNote = "작은 그림으로 넣었습니다."
+                    )
+                } else {
+                    _ui.value = _ui.value.copy(coverNote = "표지를 받지 못했습니다.")
+                }
+                return@launch
+            }
+            _ui.value = _ui.value.copy(
+                coverBytes = got.first,
+                coverMime = got.second,
+                coverNote = "${item.cover.source} 표지를 넣었습니다."
+            )
+        }
+    }
+
+    fun clearCoverResults() {
+        _ui.value = _ui.value.copy(coverResults = emptyList(), coverNote = "")
     }
 
     fun clearCover() {

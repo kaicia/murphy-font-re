@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -348,25 +349,19 @@ fun MainScreen(vm: MainViewModel) {
                         }
                     }
 
+                    Spacer(Modifier.height(14.dp))
+                    HorizontalDivider()
                     Spacer(Modifier.height(10.dp))
+                    Label("표지")
+                    Spacer(Modifier.height(6.dp))
+
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         val bytes = s.coverBytes
                         if (bytes != null) {
-                            val bmp = remember(bytes) {
-                                runCatching {
-                                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                                }.getOrNull()
-                            }
-                            if (bmp != null) {
-                                Image(
-                                    bitmap = bmp.asImageBitmap(),
-                                    contentDescription = "표지",
-                                    modifier = Modifier.width(56.dp)
-                                )
-                                Spacer(Modifier.width(12.dp))
-                            }
+                            CoverImage(bytes, Modifier.width(56.dp))
+                            Spacer(Modifier.width(12.dp))
                             Text(
-                                "표지가 EPUB에 포함됩니다.",
+                                "이 표지가 EPUB에 들어갑니다.",
                                 Modifier.weight(1f),
                                 style = MaterialTheme.typography.bodySmall
                             )
@@ -378,8 +373,64 @@ fun MainScreen(vm: MainViewModel) {
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            TextButton(onClick = { pickCover.launch("image/*") }) { Text("이미지 고르기") }
                         }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    FlowRowCompat {
+                        OutlinedButton(onClick = { vm.searchCovers() }, enabled = !s.coverBusy) {
+                            Text(if (s.coverBusy) "찾는 중…" else "웹에서 표지 찾기")
+                        }
+                        OutlinedButton(onClick = { pickCover.launch("image/*") }) {
+                            Text("기기에서 고르기")
+                        }
+                        if (s.coverResults.isNotEmpty()) {
+                            TextButton(onClick = { vm.clearCoverResults() }) { Text("목록 닫기") }
+                        }
+                    }
+
+                    if (s.coverNote.isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            s.coverNote,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    if (s.coverResults.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            s.coverResults.forEach { item ->
+                                val thumb = item.thumb
+                                if (thumb != null) Column(
+                                    Modifier
+                                        .width(84.dp)
+                                        .clickable { vm.useCover(item) },
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    CoverImage(thumb, Modifier.fillMaxWidth())
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        item.cover.source,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            "눌러서 고르면 큰 그림으로 다시 받아 넣습니다.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -669,6 +720,23 @@ private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) 
             Spacer(Modifier.height(10.dp))
             content()
         }
+    }
+}
+
+/** 바이트를 그대로 그린다. 디코드가 실패하면 자리만 비워둔다. */
+@Composable
+private fun CoverImage(bytes: ByteArray, modifier: Modifier = Modifier) {
+    val bmp = remember(bytes) {
+        runCatching {
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }.getOrNull()
+    }
+    if (bmp != null) {
+        Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = "표지",
+            modifier = modifier
+        )
     }
 }
 
