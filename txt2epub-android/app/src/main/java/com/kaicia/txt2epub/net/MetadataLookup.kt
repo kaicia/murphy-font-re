@@ -130,8 +130,8 @@ object MetadataLookup {
 
     /** 각주 표시([1]), 괄호 주석, 꼬리 구두점을 정리한다. */
     private fun clean(s: String): String {
-        var v = s.replace(Regex("""\[\d+]"""), "")
-            .replace(Regex("""\[[^\]]{0,20}]"""), "")
+        var v = s.replace(Regex("""\[\d+\]"""), "")
+            .replace(Regex("""\[[^\]]{0,20}\]"""), "")
             .replace(Regex("""\s+"""), " ")
             .trim()
             .trim(',', '.', '·', ':', '：')

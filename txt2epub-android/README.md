@@ -10,7 +10,7 @@
 ```bash
 cd txt2epub-android
 ./gradlew assembleDebug        # 결과: app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest    # 단위 테스트 64개
+./gradlew testDebugUnitTest    # 단위 테스트 66개
 ```
 
 Android Studio(Koala 이상)에서 `txt2epub-android` 폴더를 열어도 됩니다.
@@ -80,6 +80,17 @@ CP949로 읽혀 전부 깨집니다. (실제로 그랬고, 단위 테스트로 �
 
 `N화` 패턴은 접두사를 선택적으로 두어 `123화`와 `제목 123화`를 한 패턴으로 잡습니다.
 실제 웹소설 txt가 두 형식을 섞어 쓰는 경우가 많습니다.
+
+### 안드로이드 정규식 (ICU)
+안드로이드는 ICU 정규식 엔진을 쓰고 데스크톱 JVM(`java.util.regex`)보다 엄격합니다.
+짝 없는 `}` 나 `]` 를 JVM은 그냥 글자로 받아주지만 ICU는 문법 오류로 막습니다.
+
+`Regex("""\{(\w+)}""")` 하나 때문에 기기에서 `FileNamer` 초기화가 터져
+앱이 죽었습니다. 단위 테스트 64개가 전부 통과한 상태였습니다 — 시험은 JVM에서
+돌기 때문에 이 차이가 드러나지 않습니다.
+
+그래서 `IcuRegexCompatTest`가 소스의 정규식 문자열을 직접 읽어 ICU가 거부하는
+모양을 찾습니다. 지금 32개를 검사합니다. 기기 없이 잡을 수 있는 유일한 방법입니다.
 
 ### 메모리
 줄마다 String 객체를 만들면 5.4MB 파일이 힙을 42MB 먹습니다. 글자 자체는 11MB인데
@@ -154,7 +165,7 @@ CP949로 읽혀 전부 깨집니다. (실제로 그랬고, 단위 테스트로 �
 
 ## 검증 상태
 
-**단위 테스트 64개** (`./gradlew testDebugUnitTest`) — 챕터 판정, 파일명 템플릿,
+**단위 테스트 66개** (`./gradlew testDebugUnitTest`) — 챕터 판정, 파일명 템플릿,
 EPUB zip 구조, 인코딩 감지, 서지 파싱. 실제 741화 파일에서 문제가 됐던 형태
 (혼합 제목 형식, 중간·끝 오탐, 결번)를 그대로 재현해서 넣었습니다.
 여기에 32만 줄 규모의 성능 시험과, 빠른 판정기가 예전 정규식과 같은 답을 내는지

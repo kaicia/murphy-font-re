@@ -43,10 +43,12 @@ object FileNamer {
     /** 확장자와 여유분을 뺀 본체 최대 바이트. */
     private const val MAX_BYTES = 180
 
-    private val TOKEN = Regex("""\{(\w+)}""")
+    // 안드로이드는 ICU 정규식이라 짝 없는 } 와 ] 를 문법 오류로 막는다.
+    // 데스크톱 JVM은 그냥 글자로 받아줘서 시험에서는 드러나지 않는다. 반드시 escape 한다.
+    private val TOKEN = Regex("""\{(\w+)\}""")
     private val FORBIDDEN = Regex("""[/\\:*?"<>|]""")
     private val CONTROL = Regex("""[\u0000-\u001f\u007f]""")
-    private val EMPTY_BRACKETS = Regex("""\(\s*\)|\[\s*]""")
+    private val EMPTY_BRACKETS = Regex("""\(\s*\)|\[\s*\]""")
     private val MULTI_SEP = Regex("""[_\-]{2,}""")
 
     fun build(
