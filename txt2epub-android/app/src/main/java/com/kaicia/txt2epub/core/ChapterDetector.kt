@@ -89,26 +89,14 @@ object ChapterDetector {
     )
 
     /**
-     * 공백으로 볼 글자.
+     * 정규식 `\s` 와 같은 범위 (ASCII 여섯 개).
      *
-     * 엔진마다 `\s` 범위가 다르다. 데스크톱 JVM은 ASCII 여섯 개뿐이고, 안드로이드가
-     * 쓰는 ICU는 `\p{Z}` 까지 포함해 전각 공백(U+3000)과 줄바꿈 없는 공백(U+00A0)도 받는다.
-     * 웹소설 txt는 HTML에서 긁어온 것이 많아 제목 줄에 이 둘이 흔하다.
-     *
-     * ASCII로만 잡으면 기기에서 '제목　123화'(전각 공백) 같은 줄을 놓쳐 챕터가 엉뚱하게
-     * 나뉜다. 시험은 JVM에서 도니까 그 차이가 드러나지도 않는다. 그래서 둘의 합집합으로
-     * 넓게 잡는다. 넓은 쪽이 놓치는 것보다 낫고, 두 엔진에서 같게 동작한다.
+     * 한때 ICU가 `\p{Z}` 까지 받는다는 이유로 전각 공백·NBSP를 넣어 넓혔다가 되돌렸다.
+     * 실제 파일에서 문제가 된 적이 없었고, 넓히면 본문 줄이 제목으로 잘못 걸려
+     * 판정이 나빠진다. 여기 적힌 범위가 시험으로 검증되는 범위다.
      */
-    internal fun isSp(c: Char): Boolean {
-        if (c == ' ' || c == '\t' || c == '\n' || c == '\u000B' || c == '\u000C' || c == '\r') return true
-        if (c.code < 0x80) return false
-        return when (Character.getType(c).toByte()) {
-            Character.SPACE_SEPARATOR,
-            Character.LINE_SEPARATOR,
-            Character.PARAGRAPH_SEPARATOR -> true
-            else -> false
-        }
-    }
+    private fun isSp(c: Char) =
+        c == ' ' || c == '\t' || c == '\n' || c == '\u000B' || c == '\u000C' || c == '\r'
 
     /** 제목 줄 뒤에 올 수 있는 구분 문자. 원래 정규식의 `(\s|$|[.:\-–—])` 와 같다. */
     private fun isTail(c: Char) = isSp(c) || c == '.' || c == ':' ||
@@ -120,14 +108,8 @@ object ChapterDetector {
     /** 찾았으면 [Ko], 못 찾았으면 null. [Ko.num]은 숫자가 Int 범위를 넘으면 null이다. */
     internal class Ko(@JvmField val num: Int?)
 
-    /**
-     * 숫자로 볼 글자.
-     *
-     * 여기도 엔진마다 다르다. 데스크톱 JVM의 `\d` 는 ASCII 열 개뿐이고, 안드로이드가
-     * 쓰는 ICU는 `\p{Nd}` 라서 전각 숫자(１２３)도 받는다. 공백과 같은 이유로 넓게 잡는다.
-     */
-    internal fun isNum(c: Char): Boolean =
-        if (c.code < 0x80) c in '0'..'9' else Character.isDigit(c)
+    /** 정규식 `\d` 와 같은 범위 (ASCII 열 개). 넓히지 않는 이유는 [isSp] 와 같다. */
+    private fun isNum(c: Char) = c in '0'..'9'
 
     /**
      * `제?\s*(\d+)\s*단위` 를 왼쪽부터 훑는다. 없으면 null.
@@ -237,10 +219,9 @@ object ChapterDetector {
         for (i in 0 until src.size) {
             var a = src.from[i]
             var b = src.to[i]
-            // 앞뒤 공백을 떼고 나서 길이를 본다. 떼기 전 길이로 거르면 들여쓴 제목 줄을
-            // 놓친다. 떼는 일은 양 끝만 훑는 거라 길이로 미리 거를 만큼 비싸지도 않다.
-            while (a < b && isSp(src.chars[a])) a++
-            while (b > a && isSp(src.chars[b - 1])) b--
+            if (b - a > MAX_TITLE_LEN + 8) continue          // 긴 줄은 제목일 수 없다
+            while (a < b && src.chars[a].isWhitespace()) a++  // trim
+            while (b > a && src.chars[b - 1].isWhitespace()) b--
             if (a == b || b - a > MAX_TITLE_LEN) continue
 
             if (n == lineNo.size) {

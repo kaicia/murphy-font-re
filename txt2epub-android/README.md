@@ -10,7 +10,7 @@
 ```bash
 cd txt2epub-android
 ./gradlew assembleDebug        # 결과: app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest    # 단위 테스트 83개
+./gradlew testDebugUnitTest    # 단위 테스트 85개
 ```
 
 Android Studio(Koala 이상)에서 `txt2epub-android` 폴더를 열어도 됩니다.
@@ -81,6 +81,15 @@ CP949로 읽혀 전부 깨집니다. (실제로 그랬고, 단위 테스트로 �
 
 `N화` 패턴은 접두사를 선택적으로 두어 `123화`와 `제목 123화`를 한 패턴으로 잡습니다.
 실제 웹소설 txt가 두 형식을 섞어 쓰는 경우가 많습니다.
+
+### 판정 범위를 넓히지 않는 이유
+안드로이드의 ICU는 `\s` 가 `\p{Z}` 를, `\d` 가 `\p{Nd}` 를 포함합니다. JVM보다 넓습니다.
+기기와 맞춘다고 전각 공백·NBSP·전각 숫자까지 받도록 넓혀 봤다가 되돌렸습니다.
+실제 파일에서 문제가 된 적이 없었고, 넓히면 본문 줄이 제목으로 잘못 걸립니다.
+
+지금 코드는 원래 정규식과 같은 ASCII 범위만 봅니다. 시험이 검증하는 범위와 같습니다.
+`RealFileRegressionTest` 가 실제 책 한 권 분량(375화, 세 자리 번호에 붙임표·줄표 혼용)으로
+이걸 지킵니다.
 
 ### 안드로이드 정규식 (ICU)
 안드로이드는 ICU 정규식 엔진을 쓰고 데스크톱 JVM(`java.util.regex`)보다 엄격합니다.
@@ -191,7 +200,7 @@ CP949로 읽혀 전부 깨집니다. (실제로 그랬고, 단위 테스트로 �
 
 ## 검증 상태
 
-**단위 테스트 83개** (`./gradlew testDebugUnitTest`) — 챕터 판정, 파일명 템플릿,
+**단위 테스트 85개** (`./gradlew testDebugUnitTest`) — 챕터 판정, 파일명 템플릿,
 EPUB zip 구조, 인코딩 감지, 서지 파싱. 실제 741화 파일에서 문제가 됐던 형태
 (혼합 제목 형식, 중간·끝 오탐, 결번)를 그대로 재현해서 넣었습니다.
 여기에 32만 줄 규모의 성능 시험과, 빠른 판정기가 예전 정규식과 같은 답을 내는지

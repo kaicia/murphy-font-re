@@ -16,17 +16,11 @@ class KoMatcherEquivalenceTest {
     /**
      * 교체 전에 쓰던 정규식. 비교 기준이라 손대면 안 된다.
      *
-     * 한 곳만 바꿔 적는다. `\s` 대신 `[\s\p{Z}]` 를 쓴다. 안드로이드가 쓰는 ICU에서는
-     * `\s` 가 원래 `\p{Z}` 를 포함하기 때문이다. 즉 이게 기기에서 돌던 실제 범위다.
-     * 데스크톱 JVM의 `\s` 는 ASCII뿐이라 이 차이가 시험에서는 드러나지 않는다.
+     * 아래 전각 공백·전각 숫자 사례는 '둘 다 안 잡는다'를 확인하는 용도다.
+     * 한때 그쪽을 잡도록 넓혔다가, 본문 줄이 제목으로 잘못 걸려 되돌렸다.
      */
-    private val SP = """[\s\p{Z}]"""
-
-    /**
-     * 숫자도 같은 이유로 범위를 맞춘다. ICU의 `\d` 는 `\p{Nd}` 라서 전각 숫자(１２３)도
-     * 받는다. 데스크톱 JVM의 `\d` 는 ASCII 열 개뿐이다.
-     */
-    private val NUM = """\p{Nd}"""
+    private val SP = """\s"""
+    private val NUM = """\d"""
 
     private fun oldLoose(unit: String) =
         Regex("""^$SP*(?:\S.{0,48}?$SP+)?제?$SP*($NUM+)$SP*$unit($SP|$|[.:\-–—])""")
