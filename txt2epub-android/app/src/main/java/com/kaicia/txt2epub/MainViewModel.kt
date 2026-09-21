@@ -403,7 +403,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             viewModelScope.launch {
                 val got = MetadataLookup.downloadCover(info.coverUrl)
                 if (got != null) {
-                    _ui.value = _ui.value.copy(coverBytes = got.first, coverMime = got.second)
+                    val fixed = normalizeCover(got.first, got.second)
+                    _ui.value = _ui.value.copy(coverBytes = fixed.first, coverMime = fixed.second)
                 } else {
                     _ui.value = _ui.value.copy(lookupNote = "표지 이미지를 받지 못했습니다.")
                 }
@@ -420,7 +421,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val bytes = withContext(Dispatchers.IO) {
                     resolver.openInputStream(uri)?.use { it.readBytes() }
                 } ?: throw IllegalStateException("이미지를 열 수 없습니다")
-                _ui.value = _ui.value.copy(coverBytes = bytes, coverMime = mime)
+                val fixed = normalizeCover(bytes, mime)
+                _ui.value = _ui.value.copy(coverBytes = fixed.first, coverMime = fixed.second)
             } catch (e: Exception) {
                 _ui.value = _ui.value.copy(error = "표지를 읽지 못했습니다: ${e.message}")
             }
@@ -433,57 +435,98 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * 썸네일은 찾자마자 한꺼번에 받는다. 12장이라 부담이 크지 않고,
      * 한 장씩 늦게 뜨는 것보다 고르기 편하다.
      */
-    fun searchCovers() {
-        val s = _ui.value
-        val q = s.title.ifBlank { s.fileName.substringBeforeLast('.', "") }.trim()
+    fun searchCovers(query: String) {
+        val q = query.trim()
         if (q.isEmpty()) {
-            _ui.value = s.copy(coverNote = "먼저 제목을 입력하세요.")
+            _ui.value = _ui.value.copy(coverNote = "검색어를 입력하세요.")
             return
         }
+        val s = _ui.value
         _ui.value = s.copy(coverBusy = true, coverNote = "표지를 찾는 중…", coverResults = emptyList())
 
         viewModelScope.launch {
             val found = runCatching {
-                CoverSearch.search(q, s.author, s.naverId, s.naverSecret)
+                CoverSearch.search(q, s.naverId, s.naverSecret)
             }.getOrDefault(emptyList())
 
-            // 서지 조회에서 이미 받아둔 대표 이미지도 후보에 넣는다
-            val extra = s.lookupResults
-                .filter { it.coverUrl.isNotBlank() }
-                .map {
-                    CoverSearch.Cover(
-                        source = it.source, title = it.title,
-                        thumbUrl = CoverSearch.https(it.coverUrl),
-                        fullUrl = CoverSearch.https(it.coverUrl)
-                    )
-                }
-            val all = CoverSearch.dedupe(found + extra).take(CoverSearch.MAX)
-
-            if (all.isEmpty()) {
+            if (found.isEmpty()) {
                 _ui.value = _ui.value.copy(
                     coverBusy = false,
-                    coverNote = "표지를 찾지 못했습니다. 제목을 다르게 넣거나 기기에서 직접 고르세요."
+                    coverNote = if (s.naverId.isBlank())
+                        "못 찾았습니다. 설정에 네이버 키를 넣으면 이미지 검색이 켜집니다. " +
+                                "아니면 아래 '웹 이미지 검색'으로 찾아 주소를 붙여넣으세요."
+                    else
+                        "못 찾았습니다. 검색어를 바꿔 보세요."
                 )
                 return@launch
             }
 
             _ui.value = _ui.value.copy(
-                coverResults = all.map { CoverItem(it) },
-                coverNote = "${all.size}장 중에서 고르세요."
+                coverResults = found.map { CoverItem(it) },
+                coverNote = "받는 중…"
             )
 
             val withThumbs = withContext(Dispatchers.IO) {
-                all.map { c ->
+                found.map { c ->
                     async { CoverItem(c, runCatching { Http.image(c.thumbUrl)?.first }.getOrNull()) }
                 }.awaitAll()
             }
+            val ok = withThumbs.filter { it.thumb != null }
             _ui.value = _ui.value.copy(
                 coverBusy = false,
-                coverResults = withThumbs.filter { it.thumb != null },
-                coverNote = withThumbs.count { it.thumb != null }
-                    .let { if (it == 0) "표지를 받지 못했습니다." else "$it 장 중에서 고르세요." }
+                coverResults = ok,
+                coverNote = if (ok.isEmpty()) "그림을 받지 못했습니다."
+                else "${ok.size}장 중에서 고르세요. 눌러서 미리 보고 넣습니다."
             )
         }
+    }
+
+    /** 브라우저에서 복사한 이미지 주소를 그대로 넣는다. */
+    fun useCoverUrl(url: String) {
+        val u = url.trim()
+        if (!u.startsWith("http")) {
+            _ui.value = _ui.value.copy(coverNote = "http로 시작하는 이미지 주소를 붙여넣으세요.")
+            return
+        }
+        _ui.value = _ui.value.copy(coverNote = "그림을 받는 중…")
+        viewModelScope.launch {
+            val got = withContext(Dispatchers.IO) {
+                runCatching { Http.image(CoverSearch.https(u)) }.getOrNull()
+            }
+            if (got == null) {
+                _ui.value = _ui.value.copy(coverNote = "그 주소에서 그림을 받지 못했습니다.")
+                return@launch
+            }
+            val fixed = normalizeCover(got.first, got.second)
+            _ui.value = _ui.value.copy(
+                coverBytes = fixed.first, coverMime = fixed.second,
+                coverNote = "붙여넣은 주소로 표지를 넣었습니다."
+            )
+        }
+    }
+
+    /**
+     * EPUB에 넣기 좋은 모양으로 맞춘다.
+     *
+     * webp 같은 형식은 규격 밖이라 안 보이는 뷰어가 있고, 원본이 너무 크면
+     * 파일만 무거워진다. 긴 변 1600px, JPEG로 줄여 담는다.
+     */
+    private fun normalizeCover(bytes: ByteArray, mime: String): Pair<ByteArray, String> {
+        val known = mime == "image/jpeg" || mime == "image/png" || mime == "image/gif"
+        if (known && bytes.size <= 1_200_000) return bytes to mime
+        return runCatching {
+            val probe = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, probe)
+            var sample = 1
+            while (maxOf(probe.outWidth, probe.outHeight) / sample > 1600) sample *= 2
+            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+                ?: return bytes to mime
+            val out = java.io.ByteArrayOutputStream()
+            bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, out)
+            bmp.recycle()
+            out.toByteArray() to "image/jpeg"
+        }.getOrDefault(bytes to mime)
     }
 
     /** 고른 후보를 큰 그림으로 다시 받아 표지로 쓴다. */
@@ -504,10 +547,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 return@launch
             }
+            val fixed = normalizeCover(got.first, got.second)
             _ui.value = _ui.value.copy(
-                coverBytes = got.first,
-                coverMime = got.second,
-                coverNote = "${item.cover.source} 표지를 넣었습니다."
+                coverBytes = fixed.first,
+                coverMime = fixed.second,
+                coverNote = "${item.cover.source} 그림을 표지로 넣었습니다."
             )
         }
     }

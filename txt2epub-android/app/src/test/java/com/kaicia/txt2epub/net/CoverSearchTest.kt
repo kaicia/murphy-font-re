@@ -72,6 +72,43 @@ class CoverSearchTest {
     }
 
     @Test
+    fun `제목이 맞을 때만 책 DB 결과를 쓴다`() {
+        // 웹소설은 책 DB에 없다. 걸러내지 않으면 엉뚱한 책 표지가 깔린다.
+        assertTrue(CoverSearch.relevant("아포칼립스에 집을 숨김", "아포칼립스에 집을 숨김"))
+        assertTrue(CoverSearch.relevant("아포칼립스에 집을 숨김", "아포칼립스에 집을 숨김 1권"))
+        assertTrue(CoverSearch.relevant("데미안", "데미안(세계문학전집)"))
+        assertTrue(CoverSearch.relevant("Demian", "demian"))
+
+        assertFalse(CoverSearch.relevant("아포칼립스에 집을 숨김", "아포칼립스 생존기"))
+        assertFalse(CoverSearch.relevant("아포칼립스에 집을 숨김", "집에서 만드는 빵"))
+        assertFalse(CoverSearch.relevant("데미안", "데미지 컨트롤"))
+        assertFalse(CoverSearch.relevant("데미안", ""))
+    }
+
+    @Test
+    fun `네이버 이미지 응답을 읽는다`() {
+        val json = """
+            {"items":[
+              {"title":"아포칼립스에 <b>집</b>을 숨김",
+               "link":"http://img.example.com/cover.jpg",
+               "thumbnail":"https://search.pstatic.net/common?src=thumb.jpg",
+               "sizeheight":"800","sizewidth":"600"},
+              {"title":"주소없음","thumbnail":"https://x/y.jpg"}
+            ]}
+        """.trimIndent()
+        val list = NaverImages.parse(json)
+        assertEquals(1, list.size)
+        assertEquals("네이버이미지", list[0].source)
+        assertEquals("아포칼립스에 집을 숨김", list[0].title)
+        assertTrue(list[0].fullUrl.startsWith("https://"))
+    }
+
+    @Test
+    fun `키가 없으면 이미지 검색은 건너뛴다`() {
+        assertTrue(NaverImages.search("아무거나", "", "").isEmpty())
+    }
+
+    @Test
     fun `https로 바꾼다`() {
         assertEquals("https://a/b.jpg", CoverSearch.https("http://a/b.jpg"))
         assertEquals("https://a/b.jpg", CoverSearch.https("https://a/b.jpg"))

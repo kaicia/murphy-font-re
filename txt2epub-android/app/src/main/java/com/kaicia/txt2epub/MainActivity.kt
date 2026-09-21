@@ -386,17 +386,64 @@ fun MainScreen(vm: MainViewModel) {
                         }
                     }
 
+                    Spacer(Modifier.height(10.dp))
+                    var coverQuery by remember(s.title) { mutableStateOf(s.title) }
+                    OutlinedTextField(
+                        value = coverQuery,
+                        onValueChange = { coverQuery = it },
+                        label = { Text("표지 검색어") },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Spacer(Modifier.height(8.dp))
                     FlowRowCompat {
-                        OutlinedButton(onClick = { vm.searchCovers() }, enabled = !s.coverBusy) {
-                            Text(if (s.coverBusy) "찾는 중…" else "웹에서 표지 찾기")
-                        }
+                        Button(
+                            onClick = { vm.searchCovers(coverQuery) },
+                            enabled = !s.coverBusy
+                        ) { Text(if (s.coverBusy) "찾는 중…" else "표지 찾기") }
+                        OutlinedButton(onClick = {
+                            val q = Uri.encode(coverQuery.ifBlank { s.title })
+                            runCatching {
+                                ctx.startActivity(
+                                    Intent(
+                                        Intent.ACTION_VIEW,
+                                        "https://www.google.com/search?tbm=isch&q=$q".toUri()
+                                    )
+                                )
+                            }
+                        }) { Text("웹 이미지 검색") }
                         OutlinedButton(onClick = { pickCover.launch("image/*") }) {
                             Text("기기에서 고르기")
                         }
                         if (s.coverResults.isNotEmpty()) {
                             TextButton(onClick = { vm.clearCoverResults() }) { Text("목록 닫기") }
                         }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    var pasted by remember { mutableStateOf("") }
+                    OutlinedTextField(
+                        value = pasted,
+                        onValueChange = { pasted = it },
+                        label = { Text("이미지 주소 붙여넣기") },
+                        placeholder = { Text("https://…", style = MaterialTheme.typography.bodySmall) },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "브라우저에서 그림을 길게 눌러 '이미지 주소 복사' 후 붙여넣으세요.",
+                            Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        TextButton(
+                            onClick = { vm.useCoverUrl(pasted); pasted = "" },
+                            enabled = pasted.isNotBlank()
+                        ) { Text("넣기") }
                     }
 
                     if (s.coverNote.isNotBlank()) {

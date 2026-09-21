@@ -112,6 +112,46 @@ object MetadataLookup {
     }
 
     /**
+     * 나무위키 문서에 실린 그림들을 모은다.
+     *
+     * 웹소설 표지는 보통 문서 맨 위 정보 상자에 있다. og:image 하나만 보면
+     * 문서와 상관없는 그림이 걸릴 때가 있어서, 문서 앞쪽 그림을 순서대로 모은다.
+     * 앞에 있을수록 표지일 확률이 높다.
+     */
+    fun namuImages(title: String, limit: Int = 6): List<String> {
+        val url = "https://namu.wiki/w/" + Http.enc(title).replace("+", "%20")
+        val html = get(url) ?: return emptyList()
+        if (html.contains("해당 문서를 찾을 수 없습니다")) return emptyList()
+        return imagesIn(html, limit)
+    }
+
+    /** 아이콘·로고처럼 표지가 될 수 없는 그림은 뺀다. */
+    fun imagesIn(html: String, limit: Int = 6): List<String> {
+        val doc = Jsoup.parse(html)
+        val out = LinkedHashSet<String>()
+        doc.selectFirst("meta[property=og:image]")?.attr("content")
+            ?.takeIf { it.isNotBlank() }?.let { out.add(fixUrl(it)) }
+        for (img in doc.select("img")) {
+            if (out.size >= limit) break
+            val src = img.attr("src").ifBlank { img.attr("data-src") }
+            if (src.isBlank()) continue
+            val u = fixUrl(src)
+            if (!u.startsWith("http")) continue
+            if (SKIP.containsMatchIn(u)) continue
+            out.add(u)
+        }
+        return out.take(limit)
+    }
+
+    private val SKIP = Regex("""(?i)(logo|icon|favicon|emoticon|\.svg$|/img/namu)""")
+
+    private fun fixUrl(u: String): String = when {
+        u.startsWith("//") -> "https:$u"
+        u.startsWith("http://") -> "https://" + u.removePrefix("http://")
+        else -> u
+    }
+
+    /**
      * 라벨 텍스트가 든 칸을 찾아 그 옆(또는 다음) 칸의 값을 읽는다.
      * 클래스명에 의존하지 않아 DOM이 바뀌어도 비교적 버틴다.
      */

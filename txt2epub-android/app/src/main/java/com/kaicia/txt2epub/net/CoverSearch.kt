@@ -33,24 +33,58 @@ object CoverSearch {
     const val MAX = 12
 
     suspend fun search(
-        title: String,
-        author: String = "",
+        query: String,
         naverId: String = "",
         naverSecret: String = ""
     ): List<Cover> = withContext(Dispatchers.IO) {
-        val q = listOf(title, author).filter { it.isNotBlank() }.joinToString(" ").trim()
+        val q = query.trim()
         if (q.isBlank()) return@withContext emptyList()
 
         val out = ArrayList<Cover>()
+
+        // 1) 진짜 이미지 검색. 키가 있으면 이게 가장 잘 맞는다.
+        runCatching { out.addAll(NaverImages.search(q, naverId, naverSecret)) }
+        // 2) 네이버 책 표지
         runCatching { out.addAll(naver(q, naverId, naverSecret)) }
-        runCatching { out.addAll(googleBooks(q)) }
-        runCatching { out.addAll(openLibrary(q)) }
-        // 제목만으로 한 번 더 (지은이를 붙이면 결과가 0인 경우가 많다)
-        if (out.isEmpty() && author.isNotBlank()) {
-            runCatching { out.addAll(googleBooks(title)) }
-            runCatching { out.addAll(openLibrary(title)) }
-        }
+        // 3) 나무위키 문서에 실린 그림 (키 없이 됨)
+        runCatching { out.addAll(namu(q)) }
+        // 4) 책 DB는 제목이 실제로 맞을 때만. 안 그러면 엉뚱한 책 표지를 집어 온다.
+        runCatching { out.addAll(googleBooks(q).filter { relevant(q, it.title) }) }
+        runCatching { out.addAll(openLibrary(q).filter { relevant(q, it.title) }) }
+
         dedupe(out).take(MAX)
+    }
+
+    // ---------- 나무위키 ----------
+
+    private fun namu(q: String): List<Cover> =
+        MetadataLookup.namuImages(q).map { Cover("나무위키", q, https(it), https(it)) }
+
+    // ---------- 제목 맞는지 보기 ----------
+
+    private val NOISE = Regex("""[\s\-_.,:;!?~()\[\]{}「」『』<>"'·]""")
+
+    fun normalize(s: String): String = NOISE.replace(s.lowercase(), "")
+
+    /**
+     * 찾은 책 제목이 검색어와 실제로 맞는지 본다.
+     *
+     * 구글북스·오픈라이브러리는 못 찾으면 비슷해 보이는 딴 책을 돌려준다.
+     * 웹소설은 이 DB에 아예 없어서 그 일이 늘 일어난다. 걸러내지 않으면
+     * 검색해도 본 적 없는 그림이 목록에 깔린다.
+     */
+    fun relevant(query: String, title: String): Boolean {
+        if (title.isBlank()) return false
+        val q = normalize(query)
+        val t = normalize(title)
+        if (q.isEmpty() || t.isEmpty()) return false
+        if (t.contains(q) || q.contains(t)) return true
+
+        // 낱말 단위로 봤을 때 검색어의 대부분이 제목에 들어 있어야 한다
+        val words = query.split(NOISE).filter { it.length >= 2 }
+        if (words.isEmpty()) return false
+        val hit = words.count { t.contains(normalize(it)) }
+        return hit.toDouble() / words.size >= 0.7
     }
 
     // ---------- 네이버 책 ----------
