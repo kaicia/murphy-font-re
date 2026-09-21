@@ -10,7 +10,7 @@
 ```bash
 cd txt2epub-android
 ./gradlew assembleDebug        # 결과: app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest    # 단위 테스트 60개
+./gradlew testDebugUnitTest    # 단위 테스트 59개
 ```
 
 Android Studio(Koala 이상)에서 `txt2epub-android` 폴더를 열어도 됩니다.
@@ -127,7 +127,7 @@ CP949로 읽혀 전부 깨집니다. (실제로 그랬고, 단위 테스트로 �
 
 ## 검증 상태
 
-**단위 테스트 60개** (`./gradlew testDebugUnitTest`) — 챕터 판정, 파일명 템플릿,
+**단위 테스트 59개** (`./gradlew testDebugUnitTest`) — 챕터 판정, 파일명 템플릿,
 EPUB zip 구조, 인코딩 감지, 서지 파싱. 실제 741화 파일에서 문제가 됐던 형태
 (혼합 제목 형식, 중간·끝 오탐, 결번)를 그대로 재현해서 넣었습니다.
 
@@ -135,5 +135,8 @@ EPUB zip 구조, 인코딩 감지, 서지 파싱. 실제 741화 파일에서 문
 1. UTF-8 감지가 표본 끝에 잘린 글자를 오류로 보고 멀쩡한 파일을 CP949로 판정 → 한글 전부 깨짐
 2. 서지 스캔이 한 줄에 라벨이 둘 있을 때 뒤 라벨까지 값으로 잡음
 
-컴파일·APK 빌드는 GitHub Actions 워크플로에서 확인합니다.
-UI 동작(Compose 렌더링)과 나무위키 실제 응답 파싱은 기기에서 직접 확인해야 합니다.
+컴파일과 APK 빌드도 GitHub Actions에서 통과했습니다 (테스트 59개 · lint · assembleDebug,
+결과물 app-debug.apk 약 9.9MB). 워크플로를 한 번 돌리면 Artifacts에서 바로 받을 수 있습니다.
+
+아직 확인 안 된 것: UI 실제 동작(Compose 렌더링)과 나무위키 실제 응답 파싱.
+이 둘은 기기에서 직접 써봐야 합니다. 설치해 보시고 이상하면 알려주세요.
