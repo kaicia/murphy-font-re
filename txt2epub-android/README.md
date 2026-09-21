@@ -10,7 +10,7 @@
 ```bash
 cd txt2epub-android
 ./gradlew assembleDebug        # 결과: app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest    # 단위 테스트 82개
+./gradlew testDebugUnitTest    # 단위 테스트 80개
 ```
 
 Android Studio(Koala 이상)에서 `txt2epub-android` 폴더를 열어도 됩니다.
@@ -191,7 +191,7 @@ CP949로 읽혀 전부 깨집니다. (실제로 그랬고, 단위 테스트로 �
 
 ## 검증 상태
 
-**단위 테스트 82개** (`./gradlew testDebugUnitTest`) — 챕터 판정, 파일명 템플릿,
+**단위 테스트 80개** (`./gradlew testDebugUnitTest`) — 챕터 판정, 파일명 템플릿,
 EPUB zip 구조, 인코딩 감지, 서지 파싱. 실제 741화 파일에서 문제가 됐던 형태
 (혼합 제목 형식, 중간·끝 오탐, 결번)를 그대로 재현해서 넣었습니다.
 여기에 32만 줄 규모의 성능 시험과, 빠른 판정기가 예전 정규식과 같은 답을 내는지
