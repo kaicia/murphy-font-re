@@ -138,7 +138,17 @@ fun MainScreen(vm: MainViewModel) {
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text("TXT → EPUB") },
+                title = {
+                    Column {
+                        Text("TXT → EPUB")
+                        // 어떤 빌드가 깔려 있는지 바로 보이게 한다
+                        Text(
+                            "v${BuildConfig.VERSION_NAME} · ${BuildConfig.GIT_SHA} · ${BuildConfig.BUILT_AT}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
                 actions = {
                     TextButton(onClick = { showSettings = true }) { Text("설정") }
                 }
@@ -349,12 +359,12 @@ fun MainScreen(vm: MainViewModel) {
                         }
                     }
 
-                    Spacer(Modifier.height(14.dp))
-                    HorizontalDivider()
-                    Spacer(Modifier.height(10.dp))
-                    Label("표지")
-                    Spacer(Modifier.height(6.dp))
+                }
+            }
 
+            // 4. 표지
+            if (s.chapters.isNotEmpty()) {
+                Section("4. 표지") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         val bytes = s.coverBytes
                         if (bytes != null) {
@@ -435,9 +445,9 @@ fun MainScreen(vm: MainViewModel) {
                 }
             }
 
-            // 4. 파일 이름
+            // 5. 파일 이름
             if (s.chapters.isNotEmpty()) {
-                Section("4. 파일 이름 규칙") {
+                Section("5. 파일 이름 규칙") {
                     FlowRowCompat {
                         FileNamer.PRESETS.forEach { (name, tpl) ->
                             FilterChip(
@@ -496,9 +506,9 @@ fun MainScreen(vm: MainViewModel) {
                 }
             }
 
-            // 5. 분할
+            // 6. 분할
             if (s.chapters.isNotEmpty()) {
-                Section("5. 나눠 저장") {
+                Section("6. 나눠 저장") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("여러 권으로 나누기", style = MaterialTheme.typography.bodyMedium)
@@ -543,9 +553,9 @@ fun MainScreen(vm: MainViewModel) {
                 }
             }
 
-            // 6. 생성
+            // 7. 생성
             if (s.chapters.isNotEmpty()) {
-                Section("6. 생성") {
+                Section("7. 생성") {
                     Button(
                         onClick = {
                             if (s.splitEnabled && s.volumeCount > 1) saveFolder.launch(null)

@@ -13,12 +13,20 @@ import kotlin.random.Random
  */
 class KoMatcherEquivalenceTest {
 
-    /** 교체 전에 쓰던 정규식. 비교 기준이라 손대면 안 된다. */
+    /**
+     * 교체 전에 쓰던 정규식. 비교 기준이라 손대면 안 된다.
+     *
+     * 한 곳만 바꿔 적는다. `\s` 대신 `[\s\p{Z}]` 를 쓴다. 안드로이드가 쓰는 ICU에서는
+     * `\s` 가 원래 `\p{Z}` 를 포함하기 때문이다. 즉 이게 기기에서 돌던 실제 범위다.
+     * 데스크톱 JVM의 `\s` 는 ASCII뿐이라 이 차이가 시험에서는 드러나지 않는다.
+     */
+    private val SP = """[\s\p{Z}]"""
+
     private fun oldLoose(unit: String) =
-        Regex("""^\s*(?:\S.{0,48}?\s+)?제?\s*(\d+)\s*$unit(\s|$|[.:\-–—])""")
+        Regex("""^$SP*(?:\S.{0,48}?$SP+)?제?$SP*(\d+)$SP*$unit($SP|$|[.:\-–—])""")
 
     private fun oldStrict(unit: String) =
-        Regex("""^\s*제?\s*(\d+)\s*$unit(\s|$|[.:\-–—])""")
+        Regex("""^$SP*제?$SP*(\d+)$SP*$unit($SP|$|[.:\-–—])""")
 
     /** (검출됨?, 번호) 를 같이 본다. 번호가 null이어도 검출은 된 경우가 있다. */
     private fun oldHit(rx: Regex, t: String): Pair<Boolean, Int?> {
@@ -62,6 +70,9 @@ class KoMatcherEquivalenceTest {
             "탭\t12화", "12\t화", "여러  칸  띄고  12화", "12화\t",
             "", "   ", "제목만 있고 숫자 없음", "2025년 1월 3화",
             "1권 1화", "1화 1권", "(1화)", "[1화]", "1.화", "１화",
+            // 웹에서 긁어온 txt에 흔한 공백들. 기기에서는 이것도 공백으로 친다.
+            "제목\u30001화", "제목\u00A0123화", "12\u3000화", "제\u00A05화",
+            "제목\u2003 7화", "제목  \u3000 9화",
             "99999999999화", "2147483648화", "2147483647화", "제99999999999화",
             "앞말 99999999999화"
         ).forEach { check(it) }
@@ -69,7 +80,7 @@ class KoMatcherEquivalenceTest {
 
     @Test
     fun `무작위 문자열에서도 답이 같다`() {
-        val alphabet = "0123456789 제화장회권편부가나다.:-–—\t".toCharArray()
+        val alphabet = "0123456789 제화장회권편부가나다.:-–—\t\u3000\u00A0".toCharArray()
         val rnd = Random(7)
         repeat(60_000) {
             val n = rnd.nextInt(0, 24)

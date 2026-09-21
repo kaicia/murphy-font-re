@@ -89,11 +89,26 @@ object ChapterDetector {
     )
 
     /**
-     * 정규식 `\s` 와 같은 범위. Char.isWhitespace()는 전각 공백(U+3000)까지 포함해서
-     * 범위가 다르다. 판정 결과가 달라지지 않게 정규식 쪽에 맞춘다.
+     * 공백으로 볼 글자.
+     *
+     * 엔진마다 `\s` 범위가 다르다. 데스크톱 JVM은 ASCII 여섯 개뿐이고, 안드로이드가
+     * 쓰는 ICU는 `\p{Z}` 까지 포함해 전각 공백(U+3000)과 줄바꿈 없는 공백(U+00A0)도 받는다.
+     * 웹소설 txt는 HTML에서 긁어온 것이 많아 제목 줄에 이 둘이 흔하다.
+     *
+     * ASCII로만 잡으면 기기에서 '제목　123화'(전각 공백) 같은 줄을 놓쳐 챕터가 엉뚱하게
+     * 나뉜다. 시험은 JVM에서 도니까 그 차이가 드러나지도 않는다. 그래서 둘의 합집합으로
+     * 넓게 잡는다. 넓은 쪽이 놓치는 것보다 낫고, 두 엔진에서 같게 동작한다.
      */
-    private fun isSp(c: Char) =
-        c == ' ' || c == '\t' || c == '\n' || c == '\u000B' || c == '\u000C' || c == '\r'
+    internal fun isSp(c: Char): Boolean {
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\u000B' || c == '\u000C' || c == '\r') return true
+        if (c.code < 0x80) return false
+        return when (Character.getType(c).toByte()) {
+            Character.SPACE_SEPARATOR,
+            Character.LINE_SEPARATOR,
+            Character.PARAGRAPH_SEPARATOR -> true
+            else -> false
+        }
+    }
 
     /** 제목 줄 뒤에 올 수 있는 구분 문자. 원래 정규식의 `(\s|$|[.:\-–—])` 와 같다. */
     private fun isTail(c: Char) = isSp(c) || c == '.' || c == ':' ||
@@ -216,9 +231,10 @@ object ChapterDetector {
         for (i in 0 until src.size) {
             var a = src.from[i]
             var b = src.to[i]
-            if (b - a > MAX_TITLE_LEN + 8) continue          // 긴 줄은 제목일 수 없다
-            while (a < b && src.chars[a].isWhitespace()) a++  // trim
-            while (b > a && src.chars[b - 1].isWhitespace()) b--
+            // 앞뒤 공백을 떼고 나서 길이를 본다. 떼기 전 길이로 거르면 들여쓴 제목 줄을
+            // 놓친다. 떼는 일은 양 끝만 훑는 거라 길이로 미리 거를 만큼 비싸지도 않다.
+            while (a < b && isSp(src.chars[a])) a++
+            while (b > a && isSp(src.chars[b - 1])) b--
             if (a == b || b - a > MAX_TITLE_LEN) continue
 
             if (n == lineNo.size) {

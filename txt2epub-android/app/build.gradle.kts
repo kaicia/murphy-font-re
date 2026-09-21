@@ -1,7 +1,26 @@
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+/**
+ * 어떤 빌드가 설치돼 있는지 앱 화면에서 바로 보이게 한다.
+ * 내려받은 APK 파일명이 늘 같아서 예전 것을 다시 설치해도 알아채기 어렵다.
+ */
+val gitSha: String = runCatching {
+    val p = ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+        .directory(rootDir).redirectErrorStream(true).start()
+    p.inputStream.bufferedReader().readText().trim().take(12).ifEmpty { "nogit" }
+}.getOrDefault("nogit")
+
+val builtAt: String = SimpleDateFormat("MM-dd HH:mm", Locale.US)
+    .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }
+    .format(Date())
 
 android {
     namespace = "com.kaicia.txt2epub"
@@ -13,6 +32,9 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
+        buildConfigField("String", "BUILT_AT", "\"$builtAt\"")
     }
 
     buildTypes {
@@ -28,7 +50,10 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
 
     packaging {
