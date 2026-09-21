@@ -194,10 +194,21 @@ fun MainScreen(vm: MainViewModel) {
             // 1. 파일
             Section("1. 파일") {
                 Button(
-                    onClick = { openFile.launch(arrayOf("text/plain", "application/octet-stream", "*/*")) },
+                    // 형식을 걸지 않는다. 기기·파일관리자에 따라 txt가 목록에서 통째로
+                    // 사라지는 일이 있었다. 대신 고른 뒤에 텍스트인지 확인해서 막는다.
+                    onClick = { openFile.launch(arrayOf("*/*")) },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !s.busy
                 ) { Text(if (s.fileName.isBlank()) "TXT 파일 선택" else "다른 파일 선택") }
+
+                if (s.fileName.isBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "변환할 원본 .txt 를 고르세요. 앱이 만든 .epub 을 다시 넣으면 안 됩니다.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
 
                 if (s.fileName.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))

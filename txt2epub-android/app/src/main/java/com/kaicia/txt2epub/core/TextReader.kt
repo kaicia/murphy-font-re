@@ -23,6 +23,18 @@ object TextReader {
         UTF16BE("UTF-16BE", "UTF-16 BE");
     }
 
+    /** 고른 파일이 무엇인지. 텍스트가 아니면 읽기 전에 막는다. */
+    enum class Kind(val label: String) {
+        TEXT("텍스트"),
+        ZIP("EPUB·ZIP 같은 압축 파일"),
+        PDF("PDF"),
+        BINARY("텍스트가 아닌 파일")
+    }
+
+    /** 텍스트가 아닌 파일을 골랐을 때. 읽어봐야 깨진 글자만 나온다. */
+    class NotTextException(val kind: Kind) :
+        Exception("텍스트 파일이 아닙니다: ${kind.label}")
+
     data class Loaded(
         val lines: TextLines,
         val encoding: Encoding,
@@ -31,6 +43,35 @@ object TextReader {
 
     /** 감지에 쓸 표본 크기. 전체를 검사하면 큰 파일에서 느려진다. */
     private const val SNIFF_BYTES = 256 * 1024
+
+    /**
+     * 텍스트 파일이 맞는지 본다.
+     *
+     * 파일 선택창에서 EPUB을 txt로 착각해 고르는 일이 실제로 있었다. 그대로 읽으면
+     * 압축된 바이트가 글자로 풀려 챕터 판정이 엉망이 된다. 읽기 전에 막고 왜 막았는지 알린다.
+     */
+    fun kindOf(head: ByteArray, len: Int): Kind {
+        if (len <= 0) return Kind.TEXT
+        fun at(i: Int) = if (i < len) head[i].toInt() and 0xFF else -1
+
+        // PK.. : zip (epub, docx, xlsx, apk …)
+        if (at(0) == 0x50 && at(1) == 0x4B &&
+            (at(2) == 0x03 || at(2) == 0x05 || at(2) == 0x07)
+        ) return Kind.ZIP
+        if (at(0) == 0x25 && at(1) == 0x50 && at(2) == 0x44 && at(3) == 0x46) return Kind.PDF   // %PDF
+        if (at(0) == 0x1F && at(1) == 0x8B) return Kind.BINARY                                  // gzip
+        if (at(0) == 0x89 && at(1) == 0x50 && at(2) == 0x4E && at(3) == 0x47) return Kind.BINARY // png
+        if (at(0) == 0xFF && at(1) == 0xD8 && at(2) == 0xFF) return Kind.BINARY                  // jpeg
+
+        // UTF-16은 정상적으로 0 바이트가 섞인다. BOM이 있으면 텍스트로 본다.
+        val utf16 = (at(0) == 0xFF && at(1) == 0xFE) || (at(0) == 0xFE && at(1) == 0xFF)
+        if (utf16) return Kind.TEXT
+
+        // 0 바이트는 텍스트에 나올 수 없다. 하나라도 있으면 텍스트가 아니다.
+        val n = minOf(len, 4096)
+        for (i in 0 until n) if (head[i].toInt() == 0) return Kind.BINARY
+        return Kind.TEXT
+    }
 
     fun sniff(head: ByteArray, len: Int): Encoding {
         if (len >= 3 &&
@@ -68,10 +109,12 @@ object TextReader {
      * 죽던 원인이 이 부담이었다. 자세한 것은 [TextLines] 설명 참고.
      */
     fun load(open: () -> InputStream, forced: Encoding?): Loaded {
-        val enc = forced ?: open().use { input ->
+        val enc = open().use { input ->
             val head = ByteArray(SNIFF_BYTES)
             val n = readFully(input, head)
-            sniff(head, n)
+            val kind = kindOf(head, n)
+            if (kind != Kind.TEXT) throw NotTextException(kind)
+            forced ?: sniff(head, n)
         }
 
         val charset = try {

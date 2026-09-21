@@ -197,6 +197,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     status = "챕터를 분석하는 중…"
                 )
                 detect()
+            } catch (e: TextReader.NotTextException) {
+                lines = emptyList()
+                _ui.value = _ui.value.copy(
+                    busy = false, status = "", fileName = "",
+                    chapters = emptyList(), candidates = emptyList(), detectNote = "",
+                    error = "${e.kind.label}을 골랐습니다. 변환할 원본 .txt 파일을 고르세요."
+                )
             } catch (e: OutOfMemoryError) {
                 lines = emptyList()
                 _ui.value = _ui.value.copy(

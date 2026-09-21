@@ -10,7 +10,7 @@
 ```bash
 cd txt2epub-android
 ./gradlew assembleDebug        # 결과: app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest    # 단위 테스트 85개
+./gradlew testDebugUnitTest    # 단위 테스트 92개
 ```
 
 Android Studio(Koala 이상)에서 `txt2epub-android` 폴더를 열어도 됩니다.
@@ -52,6 +52,16 @@ MainActivity.kt         Compose UI
 ```
 
 ## 핵심 동작
+
+### 파일 고르기
+파일 선택창에 형식 제한을 걸지 않습니다. `text/plain` 같은 걸 걸었더니 기기와
+파일 관리자에 따라 **txt가 목록에서 통째로 사라지고 예전에 만든 epub만 보이는**
+일이 있었습니다. 그걸 텍스트로 알고 넣으면 압축 바이트가 글자로 풀려 챕터 판정이
+엉망이 됩니다.
+
+그래서 전부 보여주고, **고른 뒤에 텍스트인지 확인해서 막습니다.** zip(epub·docx),
+PDF, 그림 파일의 머리 바이트를 보고, 앞 4KB에 0 바이트가 섞여 있으면 텍스트가
+아닌 것으로 봅니다. UTF-16은 0 바이트가 정상이라 BOM을 먼저 봅니다.
 
 ### 파일 입출력
 SAF(Storage Access Framework)를 씁니다. `OpenDocument`로 읽고 `CreateDocument`로 저장하므로
@@ -200,7 +210,7 @@ CP949로 읽혀 전부 깨집니다. (실제로 그랬고, 단위 테스트로 �
 
 ## 검증 상태
 
-**단위 테스트 85개** (`./gradlew testDebugUnitTest`) — 챕터 판정, 파일명 템플릿,
+**단위 테스트 92개** (`./gradlew testDebugUnitTest`) — 챕터 판정, 파일명 템플릿,
 EPUB zip 구조, 인코딩 감지, 서지 파싱. 실제 741화 파일에서 문제가 됐던 형태
 (혼합 제목 형식, 중간·끝 오탐, 결번)를 그대로 재현해서 넣었습니다.
 여기에 32만 줄 규모의 성능 시험과, 빠른 판정기가 예전 정규식과 같은 답을 내는지
