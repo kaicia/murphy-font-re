@@ -186,8 +186,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     status = "챕터를 분석하는 중…"
                 )
                 detect()
+            } catch (e: OutOfMemoryError) {
+                lines = emptyList()
+                _ui.value = _ui.value.copy(
+                    busy = false, status = "",
+                    error = "파일이 너무 커서 메모리에 올리지 못했습니다."
+                )
             } catch (e: Exception) {
-                _ui.value = _ui.value.copy(busy = false, error = "파일을 읽지 못했습니다: ${e.message}")
+                _ui.value = _ui.value.copy(
+                    busy = false, status = "",
+                    error = "파일을 읽지 못했습니다: ${e.message}"
+                )
             }
         }
     }
@@ -199,16 +208,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- 챕터 판정 ----------
 
     fun detect() {
-        if (lines.isEmpty()) return
+        if (lines.isEmpty()) {
+            // 빈 파일. 여기서 그냥 돌아가면 busy가 켜진 채로 화면이 멈춘다.
+            _ui.value = _ui.value.copy(
+                busy = false, progress = 0f, status = "",
+                chapters = emptyList(), candidates = emptyList(),
+                detectNote = "", error = "내용이 없는 파일입니다."
+            )
+            return
+        }
         _ui.value = _ui.value.copy(busy = true, progress = 0f, status = "챕터를 분석하는 중…")
         viewModelScope.launch {
-            val list = withContext(Dispatchers.Default) {
-                ChapterDetector.detect(lines) { done, total ->
-                    _ui.value = _ui.value.copy(
-                        progress = done.toFloat() / total,
-                        status = "챕터 패턴 분석 중… $done / $total"
-                    )
+            val list = try {
+                withContext(Dispatchers.Default) {
+                    ChapterDetector.detect(lines) { done, total ->
+                        _ui.value = _ui.value.copy(
+                            progress = done.toFloat() / total,
+                            status = "챕터 패턴 분석 중… $done / $total"
+                        )
+                    }
                 }
+            } catch (e: OutOfMemoryError) {
+                // 여기서 죽게 두면 앱이 통째로 내려간다. 본문을 놓아주고 알린다.
+                lines = emptyList()
+                _ui.value = _ui.value.copy(
+                    busy = false, progress = 0f, status = "",
+                    error = "메모리가 부족합니다. 파일을 나눠서 변환해 보세요."
+                )
+                return@launch
+            } catch (e: Throwable) {
+                _ui.value = _ui.value.copy(
+                    busy = false, progress = 0f, status = "",
+                    error = "챕터 분석 실패: ${e.javaClass.simpleName} ${e.message ?: ""}"
+                )
+                return@launch
             }
             val best = list.firstOrNull()
             if (best == null || best.score < ChapterDetector.MIN_SCORE) {
@@ -306,7 +339,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         viewModelScope.launch {
-            val found = withContext(Dispatchers.Default) { MetaScanner.scan(lines) }
+            val found = runCatching {
+                withContext(Dispatchers.Default) { MetaScanner.scan(lines) }
+            }.getOrElse { MetaScanner.Found() }
             if (found.isEmpty) {
                 _ui.value = _ui.value.copy(lookupNote = "파일 안에서 지은이·출판사 표기를 찾지 못했습니다.")
                 return@launch

@@ -24,7 +24,7 @@ object TextReader {
     }
 
     data class Loaded(
-        val lines: List<String>,
+        val lines: TextLines,
         val encoding: Encoding,
         val charCount: Long
     )
@@ -63,6 +63,9 @@ object TextReader {
     /**
      * 스트림에서 전체를 읽어 줄 단위로 반환한다.
      * [forced]가 null이면 자동 감지한다.
+     *
+     * 줄마다 String을 만들지 않고 글자 배열 한 벌에 담는다. 큰 파일에서 앱이
+     * 죽던 원인이 이 부담이었다. 자세한 것은 [TextLines] 설명 참고.
      */
     fun load(open: () -> InputStream, forced: Encoding?): Loaded {
         val enc = forced ?: open().use { input ->
@@ -78,25 +81,86 @@ object TextReader {
             charset("EUC-KR")
         }
 
-        val lines = ArrayList<String>(1 shl 14)
-        var chars = 0L
-        open().use { input ->
-            input.bufferedReader(charset).use { r ->
-                var first = true
-                while (true) {
-                    var line = r.readLine() ?: break
-                    if (first) {
-                        line = line.removePrefix("\uFEFF")
-                        first = false
-                    }
-                    // readLine이 \r\n, \n, \r 를 모두 처리하지만 남은 \r 를 정리
-                    if (line.endsWith("\r")) line = line.dropLast(1)
-                    lines.add(line)
-                    chars += line.length + 1
+        val chars = open().use { input -> readAllChars(input, charset) }
+        return split(chars, enc)
+    }
+
+    /** 조각으로 받아 마지막에 한 번만 이어 붙인다. 배열을 키우며 복사하는 것보다 덜 든다. */
+    private fun readAllChars(input: InputStream, charset: java.nio.charset.Charset): CharArray {
+        val reader = java.io.InputStreamReader(input, charset)
+        val chunks = ArrayList<CharArray>()
+        var total = 0
+        while (true) {
+            val chunk = CharArray(CHUNK)
+            var off = 0
+            while (off < chunk.size) {
+                val n = reader.read(chunk, off, chunk.size - off)
+                if (n < 0) break
+                off += n
+            }
+            if (off > 0) {
+                chunks.add(if (off == chunk.size) chunk else chunk.copyOf(off))
+                total += off
+            }
+            if (off < chunk.size) break
+        }
+
+        val all = CharArray(total)
+        var at = 0
+        for (c in chunks) {
+            System.arraycopy(c, 0, all, at, c.size)
+            at += c.size
+        }
+        chunks.clear()
+        return all
+    }
+
+    private const val CHUNK = 1 shl 16
+
+    /** 줄 경계를 찾는다. \r\n, \n, \r 를 모두 줄바꿈으로 본다. */
+    private fun split(chars: CharArray, enc: Encoding): Loaded {
+        val n = chars.size
+        var start = 0
+        // 첫머리 BOM은 본문이 아니다
+        if (n > 0 && chars[0] == '\uFEFF') start = 1
+
+        var count = 0
+        var from = IntArray(1 shl 14)
+        var to = IntArray(1 shl 14)
+        var chars2 = 0L
+
+        var i = start
+        var lineStart = start
+        while (i < n) {
+            val c = chars[i]
+            if (c == '\n' || c == '\r') {
+                if (count == from.size) {
+                    from = from.copyOf(count * 2)
+                    to = to.copyOf(count * 2)
                 }
+                from[count] = lineStart
+                to[count] = i
+                chars2 += (i - lineStart) + 1
+                count++
+                i = if (c == '\r' && i + 1 < n && chars[i + 1] == '\n') i + 2 else i + 1
+                lineStart = i
+            } else {
+                i++
             }
         }
-        return Loaded(lines, enc, chars)
+        // 줄바꿈으로 끝나지 않은 마지막 줄
+        if (lineStart < n) {
+            if (count == from.size) {
+                from = from.copyOf(count + 1)
+                to = to.copyOf(count + 1)
+            }
+            from[count] = lineStart
+            to[count] = n
+            chars2 += (n - lineStart) + 1
+            count++
+        }
+
+        return Loaded(TextLines(chars, from, to, count), enc, chars2)
     }
 
     private fun readFully(input: InputStream, buf: ByteArray): Int {

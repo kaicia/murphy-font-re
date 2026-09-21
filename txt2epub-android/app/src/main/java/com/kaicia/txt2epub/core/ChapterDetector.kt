@@ -114,33 +114,32 @@ object ChapterDetector {
      * 원래 정규식의 우선순위를 그대로 따른다. 접두사가 붙은 것을 먼저 보고,
      * 없으면 줄 맨 앞에서 시작하는 것을 쓴다.
      */
-    internal fun matchKo(t: String, unit: Char, allowPrefix: Boolean): Ko? {
+    internal fun matchKo(t: CharArray, start: Int, end: Int, unit: Char, allowPrefix: Boolean): Ko? {
         var zeroFallback: Ko? = null
-        var i = 0
-        val len = t.length
-        while (i < len) {
+        var i = start
+        while (i < end) {
             if (!isNum(t[i])) { i++; continue }
             var b = i
-            while (b < len && isNum(t[b])) b++
+            while (b < end && isNum(t[b])) b++
 
             // 숫자 뒤: 공백을 건너뛰고 단위 글자, 그 뒤는 끝이거나 구분 문자
             var c = b
-            while (c < len && isSp(t[c])) c++
-            if (c >= len || t[c] != unit) { i = b; continue }
-            if (c + 1 < len && !isTail(t[c + 1])) { i = b; continue }
+            while (c < end && isSp(t[c])) c++
+            if (c >= end || t[c] != unit) { i = b; continue }
+            if (c + 1 < end && !isTail(t[c + 1])) { i = b; continue }
 
             // 자릿수가 너무 많으면 Int로 못 담는다. 그래도 검출은 된 것으로 친다.
-            val num = t.substring(i, b).toIntOrNull()
+            val num = String(t, i, b - i).toIntOrNull()
 
             // 숫자 앞: '제'가 붙어 있으면 그 자리도 시작점 후보다 ('제 12화')
             var j = i
-            while (j > 0 && isSp(t[j - 1])) j--
-            val hasJe = j > 0 && t[j - 1] == '제'
+            while (j > start && isSp(t[j - 1])) j--
+            val hasJe = j > start && t[j - 1] == '제'
 
-            if (i == 0 || (hasJe && j - 1 == 0)) {
+            if (i == start || (hasJe && j - 1 == start)) {
                 if (zeroFallback == null) zeroFallback = Ko(num)
             }
-            if (allowPrefix && (prefixOk(t, i) || (hasJe && prefixOk(t, j - 1)))) {
+            if (allowPrefix && (prefixOk(t, start, i) || (hasJe && prefixOk(t, start, j - 1)))) {
                 return Ko(num)                  // 접두사가 붙은 쪽이 우선
             }
             i = b
@@ -148,13 +147,24 @@ object ChapterDetector {
         return zeroFallback
     }
 
+    /** 시험에서 쓰는 문자열 판. */
+    internal fun matchKo(t: String, unit: Char, allowPrefix: Boolean): Ko? {
+        val a = t.toCharArray()
+        return matchKo(a, 0, a.size, unit, allowPrefix)
+    }
+
+    private fun contains(chars: CharArray, from: Int, to: Int, c: Char): Boolean {
+        for (i in from until to) if (chars[i] == c) return true
+        return false
+    }
+
     /** 토큰 앞부분이 `\S.{0,48}?\s+` 로 받아들여지는지 본다. */
-    private fun prefixOk(t: String, start: Int): Boolean {
-        if (start == 0) return false
-        if (!isSp(t[start - 1])) return false               // 공백으로 끝나야 한다
-        var e = start
-        while (e > 0 && isSp(t[e - 1])) e--
-        return e in 1..MAX_PREFIX                            // 앞말이 1~49자
+    private fun prefixOk(t: CharArray, start: Int, at: Int): Boolean {
+        if (at == start) return false
+        if (!isSp(t[at - 1])) return false                  // 공백으로 끝나야 한다
+        var e = at
+        while (e > start && isSp(t[e - 1])) e--
+        return (e - start) in 1..MAX_PREFIX                  // 앞말이 1~49자
     }
 
     /** 각 줄의 시작 오프셋(문자 기준). 길이 계산에 쓴다. */
@@ -170,25 +180,76 @@ object ChapterDetector {
     }
 
     /**
-     * 짧고 비어 있지 않은 줄만 추려 둔 것.
+     * 짧고 비어 있지 않은 줄만 추려 둔 것. 글자는 복사하지 않고 위치만 들고 있는다.
      *
-     * 예전에는 패턴마다 32만 줄을 다시 훑고 줄마다 trim을 다시 했다.
-     * 17번 반복하면 그대로 17배다. 한 번만 만들어 모든 패턴이 나눠 쓴다.
+     * 예전에는 패턴마다 32만 줄을 다시 훑고 줄마다 trim을 다시 했다. 17번 반복하면
+     * 그대로 17배다. 게다가 잘라낸 String을 들고 있으면 파일만 한 메모리를 한 벌 더 쓴다.
+     * 한 번만 위치를 추려 모든 패턴이 나눠 쓴다.
      */
-    internal class Lines(val index: IntArray, val text: Array<String>)
+    internal class Lines(
+        @JvmField val chars: CharArray,
+        @JvmField val lineNo: IntArray,
+        @JvmField val from: IntArray,
+        @JvmField val to: IntArray,
+        @JvmField val n: Int
+    )
+
+    /** 정규식에 넘길 때 글자를 복사하지 않으려고 쓰는 창. 한 개를 계속 옮겨 쓴다. */
+    private class Window(@JvmField val chars: CharArray) : CharSequence {
+        @JvmField var from = 0
+        @JvmField var to = 0
+        override val length: Int get() = to - from
+        override fun get(index: Int): Char = chars[from + index]
+        override fun subSequence(startIndex: Int, endIndex: Int): CharSequence =
+            String(chars, from + startIndex, endIndex - startIndex)
+        override fun toString(): String = String(chars, from, to - from)
+    }
 
     private fun prepare(lines: List<String>): Lines {
-        val idx = ArrayList<Int>(lines.size / 4 + 16)
-        val txt = ArrayList<String>(lines.size / 4 + 16)
-        for (i in lines.indices) {
-            val raw = lines[i]
-            if (raw.length > MAX_TITLE_LEN + 8) continue     // 긴 줄은 제목일 수 없다
-            val t = raw.trim()
-            if (t.isEmpty() || t.length > MAX_TITLE_LEN) continue
-            idx.add(i)
-            txt.add(t)
+        val src = lines as? TextLines ?: materialize(lines)
+        val cap = src.size / 2 + 16
+        var lineNo = IntArray(cap)
+        var from = IntArray(cap)
+        var to = IntArray(cap)
+        var n = 0
+
+        for (i in 0 until src.size) {
+            var a = src.from[i]
+            var b = src.to[i]
+            if (b - a > MAX_TITLE_LEN + 8) continue          // 긴 줄은 제목일 수 없다
+            while (a < b && src.chars[a].isWhitespace()) a++  // trim
+            while (b > a && src.chars[b - 1].isWhitespace()) b--
+            if (a == b || b - a > MAX_TITLE_LEN) continue
+
+            if (n == lineNo.size) {
+                lineNo = lineNo.copyOf(n * 2)
+                from = from.copyOf(n * 2)
+                to = to.copyOf(n * 2)
+            }
+            lineNo[n] = i
+            from[n] = a
+            to[n] = b
+            n++
         }
-        return Lines(idx.toIntArray(), txt.toTypedArray())
+        return Lines(src.chars, lineNo, from, to, n)
+    }
+
+    /** 시험용으로 넘어오는 평범한 List<String>을 같은 모양으로 바꾼다. */
+    private fun materialize(lines: List<String>): TextLines {
+        var total = 0
+        for (l in lines) total += l.length + 1
+        val chars = CharArray(total)
+        val from = IntArray(lines.size)
+        val to = IntArray(lines.size)
+        var at = 0
+        lines.forEachIndexed { i, l ->
+            from[i] = at
+            l.toCharArray(chars, at)
+            at += l.length
+            to[i] = at
+            chars[at++] = '\n'
+        }
+        return TextLines(chars, from, to, lines.size)
     }
 
     /**
@@ -219,23 +280,29 @@ object ChapterDetector {
         total: Long
     ): Candidate? {
         val raw = ArrayList<Hit>()
+        val chars = lines.chars
         val unit = pat.unit
         if (unit != null) {
-            for (k in lines.text.indices) {
-                val t = lines.text[k]
-                if (t.indexOf(unit) < 0) continue           // 단위 글자가 없으면 볼 것도 없다
-                val m = matchKo(t, unit, pat.allowPrefix) ?: continue
-                raw.add(Hit(lines.index[k], t, m.num))
+            for (k in 0 until lines.n) {
+                val a = lines.from[k]
+                val b = lines.to[k]
+                if (!contains(chars, a, b, unit)) continue   // 단위 글자가 없으면 볼 것도 없다
+                val m = matchKo(chars, a, b, unit, pat.allowPrefix) ?: continue
+                raw.add(Hit(lines.lineNo[k], String(chars, a, b - a), m.num))
             }
         } else {
             val rx = pat.regex!!
-            for (k in lines.text.indices) {
-                val t = lines.text[k]
-                if (!pat.headOk(t[0])) continue             // 첫 글자로 먼저 거른다
-                val m = rx.find(t) ?: continue
+            val win = Window(chars)
+            for (k in 0 until lines.n) {
+                val a = lines.from[k]
+                val b = lines.to[k]
+                if (!pat.headOk(chars[a])) continue          // 첫 글자로 먼저 거른다
+                win.from = a
+                win.to = b
+                val m = rx.find(win) ?: continue
                 val g = m.groupValues.getOrNull(1)
                 val n = if (g != null && g.isNotEmpty() && g.all { it.isDigit() }) g.toIntOrNull() else null
-                raw.add(Hit(lines.index[k], t, n))
+                raw.add(Hit(lines.lineNo[k], String(chars, a, b - a), n))
             }
         }
         if (raw.size < 2) return null

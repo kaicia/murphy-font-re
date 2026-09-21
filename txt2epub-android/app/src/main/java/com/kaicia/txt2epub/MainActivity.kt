@@ -32,6 +32,7 @@ import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kaicia.txt2epub.core.FileNamer
 import com.kaicia.txt2epub.core.TextReader
+import com.kaicia.txt2epub.data.Crash
 import com.kaicia.txt2epub.ui.Txt2EpubTheme
 
 class MainActivity : ComponentActivity() {
@@ -39,10 +40,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Crash.install(this)
+        val crash = Crash.lastReport(this)
         handleIncoming(intent)
         setContent {
             Txt2EpubTheme {
-                Surface(Modifier.fillMaxSize()) { MainScreen(vm) }
+                Surface(Modifier.fillMaxSize()) {
+                    var report by remember { mutableStateOf(crash) }
+                    MainScreen(vm)
+                    report?.let {
+                        CrashDialog(it) { Crash.clear(this@MainActivity); report = null }
+                    }
+                }
             }
         }
     }
@@ -510,6 +519,42 @@ fun MainScreen(vm: MainViewModel) {
 }
 
 // ---------- 대화상자 ----------
+
+/** 지난 실행에서 앱이 죽었으면 이유를 보여준다. 복사해서 그대로 전달하면 된다. */
+@Composable
+private fun CrashDialog(report: String, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
+                cm?.setPrimaryClip(android.content.ClipData.newPlainText("txt2epub crash", report))
+                onDismiss()
+            }) { Text("복사하고 닫기") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+        title = { Text("지난번에 앱이 종료됐습니다") },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 380.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    "아래 내용을 복사해서 알려주시면 원인을 바로 찾을 수 있습니다.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    report,
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                )
+            }
+        }
+    )
+}
 
 @Composable
 private fun ChapterListDialog(vm: MainViewModel, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
