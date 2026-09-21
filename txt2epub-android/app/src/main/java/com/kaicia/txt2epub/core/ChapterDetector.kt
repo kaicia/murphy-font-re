@@ -38,6 +38,15 @@ object ChapterDetector {
     /** 점수가 이 값 미만이면 패턴 없음으로 본다. */
     const val MIN_SCORE = 0.22
 
+    /**
+     * 챕터 하나가 이보다 길면 후보에서 뺀다.
+     *
+     * 본문에 우연히 걸린 몇 줄로 파일을 두세 토막 내는 일을 막는다. 실제로 2.1MB 파일이
+     * '1.5m짜리 창대' 같은 줄 네 개에 걸려 49만 자짜리 챕터 다섯 개가 된 적이 있다.
+     * 점수만으로는 0.47이 나와서 기준점(0.22)을 넘어 버린다. 웹소설 한 화는 길어야 3만 자다.
+     */
+    private const val MAX_MEAN_CHARS = 120_000.0
+
     /** 제목 줄로 인정할 최대 길이. */
     private const val MAX_TITLE_LEN = 80
 
@@ -81,7 +90,11 @@ object ChapterDetector {
         Pattern("CHAPTER N", "C", Regex("""^\s*CHAPTER\s+(\d+)\b""")),
         Pattern("Part N", "P", Regex("""^\s*Part\s+(\d+)\b""")),
         Pattern("Episode N", "E", Regex("""^\s*Episode\s+(\d+)\b""")),
-        Pattern("숫자 + 점", "", Regex("""^\s*(\d+)\s*[.、]\s*\S""")),
+        // 실제 웹소설 txt에서 가장 흔한 형식 중 하나다. 번호 없이 제목만 넣는 경우가 많다.
+        //   < 프롤로그 >        < 차원문을 이용하려면 - 3 >        「1화 시작」
+        Pattern("< 제목 >", "<＜〈「『【", Regex("""^\s*[<＜〈「『【]\s*(\S.*?)\s*[>＞〉」』】]""")),
+        // 뒤에 숫자가 또 오면 제목이 아니라 소수점이다: '1.5m짜리 창대', '5.56mm', '999.9'
+        Pattern("숫자 + 점", "", Regex("""^\s*(\d+)\s*[.、]\s*(?!\d)\S""")),
         Pattern("마크다운 #", "#", Regex("""^\s*#+\s+(\S)""")),
         Pattern("[N]", "[(<", Regex("""^\s*[\[(<](\d+)[\])>]""")),
         Pattern("= 구분선 =", "=-–—*_", Regex("""^\s*[=\-–—*_]{3,}\s*$""")),
@@ -321,6 +334,7 @@ object ChapterDetector {
             (end - start).toDouble()
         }
         val mean = sizes.average()
+        if (mean > MAX_MEAN_CHARS) return null      // 챕터라고 볼 수 없는 크기
         val sd = kotlin.math.sqrt(sizes.sumOf { (it - mean) * (it - mean) } / sizes.size)
         val cv = if (mean > 0) sd / mean else 99.0
         val evenness = 1.0 / (1.0 + cv)
@@ -408,6 +422,16 @@ object ChapterDetector {
 
     private val NUMERIC_TITLE = Regex("""^[\s\d=\-–—*_.\[\]()<>]+$""")
 
+    /** `< 제목 >` 처럼 괄호로 감싼 제목에서 괄호를 벗긴다. 목차에 그대로 보이는 값이다. */
+    private val WRAPPED = Regex("""^[<＜〈「『【]\s*(\S.*?)\s*[>＞〉」』】]\s*(.{0,8})$""")
+
+    fun cleanTitle(raw: String): String {
+        val m = WRAPPED.find(raw.trim()) ?: return raw
+        val inner = m.groupValues[1].trim()
+        val tail = m.groupValues[2].trim()
+        return if (tail.isEmpty()) inner else "$inner $tail"
+    }
+
     /** 검출 결과를 실제 챕터 경계로 바꾼다. */
     fun buildChapters(hits: List<Hit>, lines: List<String>, fallbackTitle: String): List<Chapter> {
         if (hits.isEmpty()) {
@@ -424,7 +448,7 @@ object ChapterDetector {
         for (j in hits.indices) {
             val start = hits[j].line
             val end = if (j + 1 < hits.size) hits[j + 1].line else lines.size
-            var title = hits[j].title
+            var title = cleanTitle(hits[j].title)
             var bodyStart = start + 1
 
             // 제목이 번호뿐이거나 구분선이면 다음 줄을 제목으로 끌어올린다
