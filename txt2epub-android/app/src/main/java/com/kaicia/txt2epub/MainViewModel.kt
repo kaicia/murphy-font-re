@@ -143,7 +143,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun open(uri: Uri, forced: TextReader.Encoding? = null) {
         sourceUri = uri
-        _ui.value = _ui.value.copy(busy = true, status = "읽는 중…", error = "", done = "")
+        _ui.value = _ui.value.copy(
+            busy = true, progress = 0f, status = "파일을 읽는 중…", error = "", done = ""
+        )
         viewModelScope.launch {
             try {
                 val ctx = getApplication<Application>()
@@ -178,8 +180,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     lineCount = loaded.lines.size,
                     charCount = loaded.charCount,
                     title = _ui.value.title.ifBlank { guessTitle },
-                    busy = false,
-                    status = ""
+                    candidates = emptyList(),
+                    chapters = emptyList(),
+                    detectNote = "",
+                    status = "챕터를 분석하는 중…"
                 )
                 detect()
             } catch (e: Exception) {
@@ -196,9 +200,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun detect() {
         if (lines.isEmpty()) return
-        _ui.value = _ui.value.copy(busy = true, status = "챕터를 분석하는 중…")
+        _ui.value = _ui.value.copy(busy = true, progress = 0f, status = "챕터를 분석하는 중…")
         viewModelScope.launch {
-            val list = withContext(Dispatchers.Default) { ChapterDetector.detect(lines) }
+            val list = withContext(Dispatchers.Default) {
+                ChapterDetector.detect(lines) { done, total ->
+                    _ui.value = _ui.value.copy(
+                        progress = done.toFloat() / total,
+                        status = "챕터 패턴 분석 중… $done / $total"
+                    )
+                }
+            }
             val best = list.firstOrNull()
             if (best == null || best.score < ChapterDetector.MIN_SCORE) {
                 val fallback = ChapterDetector.buildChapters(

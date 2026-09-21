@@ -11,8 +11,6 @@ package com.kaicia.txt2epub.core
  */
 object ChapterDetector {
 
-    data class Pattern(val name: String, val regex: Regex)
-
     data class Hit(val line: Int, val title: String, val num: Int?)
 
     data class Candidate(
@@ -43,28 +41,121 @@ object ChapterDetector {
     /** 제목 줄로 인정할 최대 길이. */
     private const val MAX_TITLE_LEN = 80
 
-    private fun ko(unit: String) =
-        Regex("""^\s*(?:\S.{0,48}?\s+)?제?\s*(\d+)\s*$unit(\s|$|[.:\-–—])""")
+    /**
+     * 후보 패턴.
+     *
+     * [unit]이 있으면 `제?\s*(\d+)\s*화` 꼴을 정규식 대신 직접 훑는다.
+     * 원래 쓰던 `^\s*(?:\S.{0,48}?\s+)?제?\s*(\d+)\s*화…` 는 앞자리 접두사를
+     * 게으른 수량자로 잡느라 줄마다 수백 번씩 역추적한다. 32만 줄짜리 파일에서는
+     * 그게 쌓여 기기에서 멈춘 것처럼 보였다. 판정 결과는 그대로 두고 찾는 방법만 바꾼다.
+     */
+    class Pattern internal constructor(
+        val name: String,
+        internal val regex: Regex?,
+        internal val unit: Char?,
+        internal val allowPrefix: Boolean,
+        /** 첫 글자가 이 중 하나일 때만 정규식을 돌린다. 빈 문자열이면 숫자만 받는다. */
+        internal val head: String = ""
+    ) {
+        constructor(name: String, head: String, regex: Regex) :
+                this(name, regex, null, false, head)
+
+        /** 줄 첫 글자로 미리 걸러낸다. 정규식은 통과한 줄에만 돌린다. */
+        internal fun headOk(c: Char): Boolean =
+            if (head.isEmpty()) c.isDigit() else head.indexOf(c) >= 0
+    }
+
+    private fun ko(unit: String) = Pattern("N$unit", null, unit[0], true)
+    private fun koStrict(unit: String) = Pattern("N$unit (엄격)", null, unit[0], false)
 
     val PATTERNS: List<Pattern> = listOf(
-        Pattern("N화", ko("화")),
-        Pattern("N화 (엄격)", Regex("""^\s*제?\s*(\d+)\s*화(\s|$|[.:\-–—])""")),
-        Pattern("N장", ko("장")),
-        Pattern("N장 (엄격)", Regex("""^\s*제?\s*(\d+)\s*장(\s|$|[.:\-–—])""")),
-        Pattern("N회", ko("회")),
-        Pattern("N권", ko("권")),
-        Pattern("N편", ko("편")),
-        Pattern("N부", ko("부")),
-        Pattern("Chapter N", Regex("""^\s*Chapter\s+(\d+)\b""")),
-        Pattern("CHAPTER N", Regex("""^\s*CHAPTER\s+(\d+)\b""")),
-        Pattern("Part N", Regex("""^\s*Part\s+(\d+)\b""")),
-        Pattern("Episode N", Regex("""^\s*Episode\s+(\d+)\b""")),
-        Pattern("숫자 + 점", Regex("""^\s*(\d+)\s*[.、]\s*\S""")),
-        Pattern("마크다운 #", Regex("""^\s*#+\s+(\S)""")),
-        Pattern("[N]", Regex("""^\s*[\[(<](\d+)[\])>]""")),
-        Pattern("= 구분선 =", Regex("""^\s*[=\-–—*_]{3,}\s*$""")),
-        Pattern("숫자만", Regex("""^\s*(\d+)\s*$"""))
+        ko("화"),
+        koStrict("화"),
+        ko("장"),
+        koStrict("장"),
+        ko("회"),
+        ko("권"),
+        ko("편"),
+        ko("부"),
+        Pattern("Chapter N", "C", Regex("""^\s*Chapter\s+(\d+)\b""")),
+        Pattern("CHAPTER N", "C", Regex("""^\s*CHAPTER\s+(\d+)\b""")),
+        Pattern("Part N", "P", Regex("""^\s*Part\s+(\d+)\b""")),
+        Pattern("Episode N", "E", Regex("""^\s*Episode\s+(\d+)\b""")),
+        Pattern("숫자 + 점", "", Regex("""^\s*(\d+)\s*[.、]\s*\S""")),
+        Pattern("마크다운 #", "#", Regex("""^\s*#+\s+(\S)""")),
+        Pattern("[N]", "[(<", Regex("""^\s*[\[(<](\d+)[\])>]""")),
+        Pattern("= 구분선 =", "=-–—*_", Regex("""^\s*[=\-–—*_]{3,}\s*$""")),
+        Pattern("숫자만", "", Regex("""^\s*(\d+)\s*$"""))
     )
+
+    /**
+     * 정규식 `\s` 와 같은 범위. Char.isWhitespace()는 전각 공백(U+3000)까지 포함해서
+     * 범위가 다르다. 판정 결과가 달라지지 않게 정규식 쪽에 맞춘다.
+     */
+    private fun isSp(c: Char) =
+        c == ' ' || c == '\t' || c == '\n' || c == '\u000B' || c == '\u000C' || c == '\r'
+
+    /** 제목 줄 뒤에 올 수 있는 구분 문자. 원래 정규식의 `(\s|$|[.:\-–—])` 와 같다. */
+    private fun isTail(c: Char) = isSp(c) || c == '.' || c == ':' ||
+            c == '-' || c == '–' || c == '—'
+
+    /** 접두사로 인정할 최대 길이. 원래 정규식의 `\S.{0,48}?` 와 같다. */
+    private const val MAX_PREFIX = 49
+
+    /** 찾았으면 [Ko], 못 찾았으면 null. [Ko.num]은 숫자가 Int 범위를 넘으면 null이다. */
+    internal class Ko(@JvmField val num: Int?)
+
+    /** 정규식 `\d` 와 같은 범위. Char.isDigit()은 전각 숫자(１)까지 받아 범위가 다르다. */
+    private fun isNum(c: Char) = c in '0'..'9'
+
+    /**
+     * `제?\s*(\d+)\s*단위` 를 왼쪽부터 훑는다. 없으면 null.
+     *
+     * 원래 정규식의 우선순위를 그대로 따른다. 접두사가 붙은 것을 먼저 보고,
+     * 없으면 줄 맨 앞에서 시작하는 것을 쓴다.
+     */
+    internal fun matchKo(t: String, unit: Char, allowPrefix: Boolean): Ko? {
+        var zeroFallback: Ko? = null
+        var i = 0
+        val len = t.length
+        while (i < len) {
+            if (!isNum(t[i])) { i++; continue }
+            var b = i
+            while (b < len && isNum(t[b])) b++
+
+            // 숫자 뒤: 공백을 건너뛰고 단위 글자, 그 뒤는 끝이거나 구분 문자
+            var c = b
+            while (c < len && isSp(t[c])) c++
+            if (c >= len || t[c] != unit) { i = b; continue }
+            if (c + 1 < len && !isTail(t[c + 1])) { i = b; continue }
+
+            // 자릿수가 너무 많으면 Int로 못 담는다. 그래도 검출은 된 것으로 친다.
+            val num = t.substring(i, b).toIntOrNull()
+
+            // 숫자 앞: '제'가 붙어 있으면 그 자리도 시작점 후보다 ('제 12화')
+            var j = i
+            while (j > 0 && isSp(t[j - 1])) j--
+            val hasJe = j > 0 && t[j - 1] == '제'
+
+            if (i == 0 || (hasJe && j - 1 == 0)) {
+                if (zeroFallback == null) zeroFallback = Ko(num)
+            }
+            if (allowPrefix && (prefixOk(t, i) || (hasJe && prefixOk(t, j - 1)))) {
+                return Ko(num)                  // 접두사가 붙은 쪽이 우선
+            }
+            i = b
+        }
+        return zeroFallback
+    }
+
+    /** 토큰 앞부분이 `\S.{0,48}?\s+` 로 받아들여지는지 본다. */
+    private fun prefixOk(t: String, start: Int): Boolean {
+        if (start == 0) return false
+        if (!isSp(t[start - 1])) return false               // 공백으로 끝나야 한다
+        var e = start
+        while (e > 0 && isSp(t[e - 1])) e--
+        return e in 1..MAX_PREFIX                            // 앞말이 1~49자
+    }
 
     /** 각 줄의 시작 오프셋(문자 기준). 길이 계산에 쓴다. */
     private fun lineOffsets(lines: List<String>): LongArray {
@@ -78,27 +169,74 @@ object ChapterDetector {
         return off
     }
 
-    fun detect(lines: List<String>): List<Candidate> {
+    /**
+     * 짧고 비어 있지 않은 줄만 추려 둔 것.
+     *
+     * 예전에는 패턴마다 32만 줄을 다시 훑고 줄마다 trim을 다시 했다.
+     * 17번 반복하면 그대로 17배다. 한 번만 만들어 모든 패턴이 나눠 쓴다.
+     */
+    internal class Lines(val index: IntArray, val text: Array<String>)
+
+    private fun prepare(lines: List<String>): Lines {
+        val idx = ArrayList<Int>(lines.size / 4 + 16)
+        val txt = ArrayList<String>(lines.size / 4 + 16)
+        for (i in lines.indices) {
+            val raw = lines[i]
+            if (raw.length > MAX_TITLE_LEN + 8) continue     // 긴 줄은 제목일 수 없다
+            val t = raw.trim()
+            if (t.isEmpty() || t.length > MAX_TITLE_LEN) continue
+            idx.add(i)
+            txt.add(t)
+        }
+        return Lines(idx.toIntArray(), txt.toTypedArray())
+    }
+
+    /**
+     * 후보 패턴을 모두 시험해 점수순으로 돌려준다.
+     *
+     * [onProgress]는 패턴 하나를 끝낼 때마다 불린다. 큰 파일에서 화면이
+     * 멈춘 것처럼 보이지 않게 진행 상황을 내보내기 위한 것이다.
+     */
+    fun detect(
+        lines: List<String>,
+        onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }
+    ): List<Candidate> {
         val off = lineOffsets(lines)
         val total = off[lines.size].coerceAtLeast(1L)
-        return PATTERNS.mapNotNull { evaluate(it, lines, off, total) }
-            .sortedByDescending { it.score }
+        val prepared = prepare(lines)
+        val out = ArrayList<Candidate>(PATTERNS.size)
+        PATTERNS.forEachIndexed { i, p ->
+            evaluate(p, prepared, off, total)?.let { out.add(it) }
+            onProgress(i + 1, PATTERNS.size)
+        }
+        return out.sortedByDescending { it.score }
     }
 
     private fun evaluate(
         pat: Pattern,
-        lines: List<String>,
+        lines: Lines,
         off: LongArray,
         total: Long
     ): Candidate? {
         val raw = ArrayList<Hit>()
-        for (i in lines.indices) {
-            val t = lines[i].trim()
-            if (t.isEmpty() || t.length > MAX_TITLE_LEN) continue
-            val m = pat.regex.find(t) ?: continue
-            val g = m.groupValues.getOrNull(1)
-            val n = if (g != null && g.isNotEmpty() && g.all { it.isDigit() }) g.toIntOrNull() else null
-            raw.add(Hit(i, t, n))
+        val unit = pat.unit
+        if (unit != null) {
+            for (k in lines.text.indices) {
+                val t = lines.text[k]
+                if (t.indexOf(unit) < 0) continue           // 단위 글자가 없으면 볼 것도 없다
+                val m = matchKo(t, unit, pat.allowPrefix) ?: continue
+                raw.add(Hit(lines.index[k], t, m.num))
+            }
+        } else {
+            val rx = pat.regex!!
+            for (k in lines.text.indices) {
+                val t = lines.text[k]
+                if (!pat.headOk(t[0])) continue             // 첫 글자로 먼저 거른다
+                val m = rx.find(t) ?: continue
+                val g = m.groupValues.getOrNull(1)
+                val n = if (g != null && g.isNotEmpty() && g.all { it.isDigit() }) g.toIntOrNull() else null
+                raw.add(Hit(lines.index[k], t, n))
+            }
         }
         if (raw.size < 2) return null
 

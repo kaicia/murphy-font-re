@@ -142,6 +142,35 @@ fun MainScreen(vm: MainViewModel) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            // 진행 상황. 큰 파일은 읽기·분석에 시간이 걸려서
+            // 이게 안 보이면 멈춘 것처럼 보인다. 그래서 맨 위에 둔다.
+            if (s.busy || s.status.isNotBlank()) {
+                Card(Modifier.fillMaxWidth()) {
+                    Row(
+                        Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (s.busy) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(14.dp))
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                s.status.ifBlank { "처리 중…" },
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            if (s.busy && s.progress > 0f) {
+                                Spacer(Modifier.height(8.dp))
+                                LinearProgressIndicator(
+                                    progress = { s.progress },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // 1. 파일
             Section("1. 파일") {
                 Button(
@@ -472,17 +501,6 @@ fun MainScreen(vm: MainViewModel) {
                         )
                     }
 
-                    if (s.busy) {
-                        Spacer(Modifier.height(10.dp))
-                        LinearProgressIndicator(
-                            progress = { s.progress },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                    if (s.status.isNotBlank()) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(s.status, style = MaterialTheme.typography.bodySmall)
-                    }
                 }
             }
 
