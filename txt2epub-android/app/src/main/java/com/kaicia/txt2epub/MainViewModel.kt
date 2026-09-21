@@ -318,6 +318,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 판정 과정을 글로 적어 준다. 화면 결과가 이상할 때 그대로 복사해 보내면 된다. */
+    fun diagnosis(): String {
+        val s = _ui.value
+        if (lines.isEmpty()) return "파일을 먼저 여세요."
+        return buildString {
+            append("파일: ${s.fileName}\n")
+            append("인코딩: ${s.encoding?.label ?: "-"}\n")
+            append(ChapterDetector.diagnose(lines, s.candidates, s.selected, s.chapters))
+        }
+    }
+
     // ---------- 미리보기 ----------
 
     /** 챕터 본문 앞부분. 미리보기 창에서 쓴다. */

@@ -120,8 +120,14 @@ object ChapterDetector {
     /** 찾았으면 [Ko], 못 찾았으면 null. [Ko.num]은 숫자가 Int 범위를 넘으면 null이다. */
     internal class Ko(@JvmField val num: Int?)
 
-    /** 정규식 `\d` 와 같은 범위. Char.isDigit()은 전각 숫자(１)까지 받아 범위가 다르다. */
-    private fun isNum(c: Char) = c in '0'..'9'
+    /**
+     * 숫자로 볼 글자.
+     *
+     * 여기도 엔진마다 다르다. 데스크톱 JVM의 `\d` 는 ASCII 열 개뿐이고, 안드로이드가
+     * 쓰는 ICU는 `\p{Nd}` 라서 전각 숫자(１２３)도 받는다. 공백과 같은 이유로 넓게 잡는다.
+     */
+    internal fun isNum(c: Char): Boolean =
+        if (c.code < 0x80) c in '0'..'9' else Character.isDigit(c)
 
     /**
      * `제?\s*(\d+)\s*단위` 를 왼쪽부터 훑는다. 없으면 null.
@@ -457,6 +463,83 @@ object ChapterDetector {
             out.add(Chapter(finalTitle, bodyStart, end))
         }
         return out
+    }
+
+    /**
+     * 왜 이렇게 나뉘었는지 적어 준다.
+     *
+     * 기기에서 결과가 이상할 때, 파일을 통째로 주고받지 않고도 원인을 볼 수 있어야 한다.
+     * 후보별 점수와 실제로 검출된 제목, 그리고 본문 앞부분을 같이 적는다.
+     * 제목 줄이 어떤 모양인지가 거의 항상 답이다.
+     */
+    fun diagnose(
+        lines: List<String>,
+        candidates: List<Candidate>,
+        chosen: Int,
+        chapters: List<Chapter>
+    ): String = buildString {
+        append("=== 챕터 판정 진단 ===\n")
+        append("줄 ${lines.size} · 글자 ${lines.sumOf { it.length + 1 }}\n")
+        append("최종 챕터 ${chapters.size}개\n\n")
+
+        append("후보 (점수순, 상위 8):\n")
+        if (candidates.isEmpty()) append("  (없음 — 어떤 패턴도 2건 이상 잡히지 않음)\n")
+        candidates.take(8).forEachIndexed { i, c ->
+            append(if (i == chosen) "  ▶ " else "    ")
+            append("${c.name} · ${c.count}건 · 점수 ${"%.3f".format(c.score)}")
+            append(" (연속성 ${"%.2f".format(c.seq)}")
+            append(" 균일 ${"%.2f".format(c.evenness)}")
+            append(" 커버 ${"%.2f".format(c.coverage)}")
+            append(" 평균 ${c.meanSize.toInt()}자")
+            if (c.dropped > 0) append(" 오탐제외 ${c.dropped}")
+            append(")\n")
+        }
+        append("기준점 $MIN_SCORE 미만이면 패턴 없음으로 봄\n\n")
+
+        val best = candidates.getOrNull(chosen)
+        if (best != null) {
+            append("검출된 제목 앞 12개:\n")
+            best.hits.take(12).forEach { append("  [줄 ${it.line}] ${cut(it.title)}\n") }
+            if (best.hits.size > 12) {
+                append("검출된 제목 뒤 4개:\n")
+                best.hits.takeLast(4).forEach { append("  [줄 ${it.line}] ${cut(it.title)}\n") }
+            }
+            append("\n")
+        }
+
+        append("본문에서 비어 있지 않은 첫 30줄:\n")
+        var shown = 0
+        for (i in lines.indices) {
+            if (shown >= 30) break
+            val t = lines[i].trim()
+            if (t.isEmpty()) continue
+            append("  [$i] ${cut(t)}\n")
+            shown++
+        }
+
+        // 가운데 부분도 본다. 앞부분만 보면 머리말만 보고 판단하게 된다.
+        val mid = lines.size / 2
+        append("\n가운데(줄 $mid) 앞뒤 12줄:\n")
+        for (i in (mid - 6).coerceAtLeast(0) until (mid + 6).coerceAtMost(lines.size)) {
+            val t = lines[i].trim()
+            append("  [$i] ${if (t.isEmpty()) "(빈 줄)" else cut(t)}\n")
+        }
+    }
+
+    /** 제목이 길면 줄이고, 눈에 안 보이는 공백은 무슨 글자인지 적는다. */
+    private fun cut(s: String, max: Int = 70): String {
+        val marked = buildString {
+            for (c in s.take(max)) {
+                when {
+                    c == '\u3000' -> append("<전각공백>")
+                    c == '\u00A0' -> append("<NBSP>")
+                    c == '\t' -> append("<탭>")
+                    c.code in 0x2000..0x200F -> append("<U+%04X>".format(c.code))
+                    else -> append(c)
+                }
+            }
+        }
+        return if (s.length > max) "$marked…(${s.length}자)" else marked
     }
 
     /** 사용자가 직접 지정한 정규식으로 검출한다. */

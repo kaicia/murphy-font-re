@@ -22,11 +22,17 @@ class KoMatcherEquivalenceTest {
      */
     private val SP = """[\s\p{Z}]"""
 
+    /**
+     * 숫자도 같은 이유로 범위를 맞춘다. ICU의 `\d` 는 `\p{Nd}` 라서 전각 숫자(１２３)도
+     * 받는다. 데스크톱 JVM의 `\d` 는 ASCII 열 개뿐이다.
+     */
+    private val NUM = """\p{Nd}"""
+
     private fun oldLoose(unit: String) =
-        Regex("""^$SP*(?:\S.{0,48}?$SP+)?제?$SP*(\d+)$SP*$unit($SP|$|[.:\-–—])""")
+        Regex("""^$SP*(?:\S.{0,48}?$SP+)?제?$SP*($NUM+)$SP*$unit($SP|$|[.:\-–—])""")
 
     private fun oldStrict(unit: String) =
-        Regex("""^$SP*제?$SP*(\d+)$SP*$unit($SP|$|[.:\-–—])""")
+        Regex("""^$SP*제?$SP*($NUM+)$SP*$unit($SP|$|[.:\-–—])""")
 
     /** (검출됨?, 번호) 를 같이 본다. 번호가 null이어도 검출은 된 경우가 있다. */
     private fun oldHit(rx: Regex, t: String): Pair<Boolean, Int?> {
@@ -69,7 +75,9 @@ class KoMatcherEquivalenceTest {
             "가".repeat(50) + " 12화", "가".repeat(80) + " 12화",
             "탭\t12화", "12\t화", "여러  칸  띄고  12화", "12화\t",
             "", "   ", "제목만 있고 숫자 없음", "2025년 1월 3화",
-            "1권 1화", "1화 1권", "(1화)", "[1화]", "1.화", "１화",
+            "1권 1화", "1화 1권", "(1화)", "[1화]", "1.화",
+            // 전각 숫자. 기기(ICU)의 \d 는 이것도 숫자로 친다.
+            "１화", "１２３화", "제１화", "제목 １２화",
             // 웹에서 긁어온 txt에 흔한 공백들. 기기에서는 이것도 공백으로 친다.
             "제목\u30001화", "제목\u00A0123화", "12\u3000화", "제\u00A05화",
             "제목\u2003 7화", "제목  \u3000 9화",
@@ -80,7 +88,7 @@ class KoMatcherEquivalenceTest {
 
     @Test
     fun `무작위 문자열에서도 답이 같다`() {
-        val alphabet = "0123456789 제화장회권편부가나다.:-–—\t\u3000\u00A0".toCharArray()
+        val alphabet = "0123456789 제화장회권편부가나다.:-–—\t\u3000\u00A0１２".toCharArray()
         val rnd = Random(7)
         repeat(60_000) {
             val n = rnd.nextInt(0, 24)

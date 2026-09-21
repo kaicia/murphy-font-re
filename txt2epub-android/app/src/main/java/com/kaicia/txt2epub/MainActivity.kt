@@ -271,6 +271,14 @@ fun MainScreen(vm: MainViewModel) {
                         }
                     }
 
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedButton(onClick = {
+                        val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
+                        cm?.setPrimaryClip(
+                            android.content.ClipData.newPlainText("txt2epub 진단", vm.diagnosis())
+                        )
+                    }) { Text("판정 진단 복사") }
+
                     var advanced by remember { mutableStateOf(false) }
                     var manual by remember { mutableStateOf("""^\s*(?:\S.{0,48}?\s+)?제?\s*(\d+)\s*화(\s|$|[.:\-])""") }
                     Spacer(Modifier.height(8.dp))
