@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.Txt2Epub" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

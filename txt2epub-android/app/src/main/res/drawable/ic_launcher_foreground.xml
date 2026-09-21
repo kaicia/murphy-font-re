@@ -1,0 +1,9 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- 책 모양 -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M34,30h40a4,4 0 0 1 4,4v40a4,4 0 0 1 -4,4H34a4,4 0 0 1 -4,-4V34a4,4 0 0 1 4,-4z"/>
+    <path android:fillColor="#B4562C"
+        android:pathData="M38,40h32v4H38z M38,50h32v4H38z M38,60h22v4H38z"/>
+</vector>
