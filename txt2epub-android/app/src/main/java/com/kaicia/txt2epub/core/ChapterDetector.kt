@@ -63,15 +63,17 @@ object ChapterDetector {
         internal val regex: Regex?,
         internal val unit: Char?,
         internal val allowPrefix: Boolean,
-        /** 첫 글자가 이 중 하나일 때만 정규식을 돌린다. 빈 문자열이면 숫자만 받는다. */
-        internal val head: String = ""
+        /** 첫 글자가 이 중 하나일 때만 정규식을 돌린다. */
+        internal val head: String = "",
+        /** 첫 글자가 숫자여도 정규식을 돌린다. head가 비어 있으면 숫자만 받는다. */
+        internal val digits: Boolean = head.isEmpty()
     ) {
-        constructor(name: String, head: String, regex: Regex) :
-                this(name, regex, null, false, head)
+        constructor(name: String, head: String, regex: Regex, digits: Boolean = head.isEmpty()) :
+                this(name, regex, null, false, head, digits)
 
         /** 줄 첫 글자로 미리 걸러낸다. 정규식은 통과한 줄에만 돌린다. */
         internal fun headOk(c: Char): Boolean =
-            if (head.isEmpty()) c.isDigit() else head.indexOf(c) >= 0
+            (digits && c.isDigit()) || head.indexOf(c) >= 0
     }
 
     private fun ko(unit: String) = Pattern("N$unit", null, unit[0], true)
@@ -97,7 +99,13 @@ object ChapterDetector {
         Pattern("< 제목 >", "<＜〈", Regex("""^\s*[<＜〈]\s*(\S.*?)\s*[>＞〉]""")),
         // '1234. 3일 후' 처럼 제목이 숫자로 시작할 수 있다. 그래서 점 뒤에 공백이 있으면 받는다.
         // 공백 없이 숫자가 붙으면 소수점이다: '1.5m짜리 창대', '5.56mm', '999.9'
-        Pattern("숫자 + 점", "", Regex("""^\s*(\d+)\s*[.、．](?:\s+\S|(?!\d)\S)""")),
+        // 꺾쇠로 감싼 것도 같은 형식이다. 한 파일 안에서 섞여 나온다:
+        //   1. 죽음-01-          < 68. 새터섹터-31- >
+        Pattern(
+            "숫자 + 점", "<＜〈",
+            Regex("""^\s*[<＜〈]?\s*(\d+)\s*[.、．](?:\s+\S|(?!\d)\S)"""),
+            digits = true
+        ),
         // #1 - 개같이 멸망   #12  —  샵 뒤에 공백이 없는 형식이 흔하다.
         // 번호를 잡아야 연속성 점수가 붙는다. 이게 없으면 본문의 *** 같은 줄에 진다.
         Pattern("#N", "#", Regex("""^\s*#+\s*(\d+)(\s|$|[.:\-–—)\]])""")),
@@ -257,6 +265,8 @@ object ChapterDetector {
             while (a < b && isEdgeSpace(src.chars[a])) a++    // trim
             while (b > a && isEdgeSpace(src.chars[b - 1])) b--
             if (a == b || b - a > MAX_TITLE_LEN) continue
+            // '< 제목 > 끝' 은 화가 끝났다는 표시다. 제목으로 잡으면 화마다 빈 챕터가 낀다.
+            if (isEndMarker(src.chars, a, b)) continue
 
             if (n == lineNo.size) {
                 lineNo = lineNo.copyOf(n * 2)
@@ -269,6 +279,27 @@ object ChapterDetector {
             n++
         }
         return Lines(src.chars, lineNo, from, to, n)
+    }
+
+    /**
+     * `< 제목 > 끝` 처럼 화 끝을 알리는 줄인지 본다.
+     *
+     * 괄호가 닫힌 다음에 '끝'이 와야 한다. '12. 세상의 끝' 처럼 제목 자체가
+     * 끝으로 끝나는 건 괄호가 없어서 걸리지 않는다.
+     */
+    internal fun isEndMarker(c: CharArray, a: Int, b: Int): Boolean {
+        var e = b
+        if (e > a && (c[e - 1] == ')' || c[e - 1] == '）')) e--
+        while (e > a && isSp(c[e - 1])) e--
+        if (e <= a || c[e - 1] != '끝') return false
+        e--
+        while (e > a && (isSp(c[e - 1]) || c[e - 1] == '(' || c[e - 1] == '（')) e--
+        return e > a && (c[e - 1] == '>' || c[e - 1] == '＞' || c[e - 1] == '〉')
+    }
+
+    internal fun isEndMarker(s: String): Boolean {
+        val t = s.trim().toCharArray()
+        return isEndMarker(t, 0, t.size)
     }
 
     /** 시험용으로 넘어오는 평범한 List<String>을 같은 모양으로 바꾼다. */

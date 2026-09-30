@@ -29,7 +29,7 @@ class BracketTitleTest {
         lines.addAll(body(60))
         lines.add("")
         for (i in 1..287) {
-            lines.add(if (i % 40 == 0) "< 차원문을 이용하려면 - $i > 끝" else "< 차원문을 이용하려면 - $i >")
+            lines.add("< 차원문을 이용하려면 - $i >")
             lines.add("")
             lines.addAll(body(58))
             // 본문에 섞인 숫자들. 제목으로 잡히면 안 된다.
@@ -37,6 +37,9 @@ class BracketTitleTest {
             if (i == 120) lines.add("5.56mm부터 시작해서 수류탄, 크레모아 등 아주 위험한 물건들로 가득하다.")
             if (i == 140) lines.add("7.62mm 탄박스를 까보니 짙은 녹색의 깡통에 러시아어가 가득했다.")
             if (i == 200) lines.add("999.9, GOLD란 글자가 선명하게 박힌 걸 보니 왠지 탐이 났다.")
+            lines.add("")
+            // 실제 파일은 화 끝마다 닫는 표시가 붙는다. 제목이 아니다.
+            lines.add("< 차원문을 이용하려면 - $i > 끝")
             lines.add("")
         }
         return lines
@@ -68,7 +71,8 @@ class BracketTitleTest {
         assertEquals("머리말", chapters[0].title)
         assertEquals("프롤로그", chapters[1].title)
         assertTrue(chapters.any { it.title == "차원문을 이용하려면 - 1" })
-        assertTrue(chapters.any { it.title == "차원문을 이용하려면 - 40 끝" })
+        // 끝 표시는 제목이 되지 않는다
+        assertTrue(chapters.none { it.title.endsWith("끝") })
         assertTrue(chapters.none { it.title.contains("<") || it.title.contains(">") })
     }
 
