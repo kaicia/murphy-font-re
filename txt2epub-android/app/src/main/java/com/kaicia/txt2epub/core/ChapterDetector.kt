@@ -95,8 +95,9 @@ object ChapterDetector {
         // 꺾쇠만 받는다. 「」『』【】 는 한국 웹소설에서 대사·시스템창 표시로 훨씬 자주 쓰여서
         // 넣었더니 본문 115줄을 제목으로 잡았다. 챕터 표시로 쓰는 건 꺾쇠 쪽이다.
         Pattern("< 제목 >", "<＜〈", Regex("""^\s*[<＜〈]\s*(\S.*?)\s*[>＞〉]""")),
-        // 뒤에 숫자가 또 오면 제목이 아니라 소수점이다: '1.5m짜리 창대', '5.56mm', '999.9'
-        Pattern("숫자 + 점", "", Regex("""^\s*(\d+)\s*[.、]\s*(?!\d)\S""")),
+        // '1234. 3일 후' 처럼 제목이 숫자로 시작할 수 있다. 그래서 점 뒤에 공백이 있으면 받는다.
+        // 공백 없이 숫자가 붙으면 소수점이다: '1.5m짜리 창대', '5.56mm', '999.9'
+        Pattern("숫자 + 점", "", Regex("""^\s*(\d+)\s*[.、．](?:\s+\S|(?!\d)\S)""")),
         // #1 - 개같이 멸망   #12  —  샵 뒤에 공백이 없는 형식이 흔하다.
         // 번호를 잡아야 연속성 점수가 붙는다. 이게 없으면 본문의 *** 같은 줄에 진다.
         Pattern("#N", "#", Regex("""^\s*#+\s*(\d+)(\s|$|[.:\-–—)\]])""")),
@@ -130,6 +131,19 @@ object ChapterDetector {
 
     /** 정규식 `\d` 와 같은 범위 (ASCII 열 개). 넓히지 않는 이유는 [isSp] 와 같다. */
     private fun isNum(c: Char) = c in '0'..'9'
+
+    /**
+     * 줄 양 끝에서 떼어낼 공백.
+     *
+     * `Char.isWhitespace()` 는 줄바꿈 없는 공백(U+00A0)과 BOM을 공백으로 보지 않는다.
+     * 웹에서 긁어온 txt는 `&nbsp;` 가 그대로 남아 제목 줄 앞에 붙어 있는 일이 흔한데,
+     * 그러면 정규식의 `^\s*` 가 걸려 제목을 통째로 놓친다.
+     *
+     * 판정 범위를 넓히는 것과는 다른 이야기다. 여기는 줄의 양 끝만 손보고,
+     * 가운데 글자를 공백으로 보지는 않는다. 그래서 본문 줄이 제목으로 걸릴 일이 없다.
+     */
+    private fun isEdgeSpace(c: Char) =
+        c.isWhitespace() || c == '\u00A0' || c == '\u2007' || c == '\u202F' || c == '\uFEFF'
 
     /**
      * `제?\s*(\d+)\s*단위` 를 왼쪽부터 훑는다. 없으면 null.
@@ -240,8 +254,8 @@ object ChapterDetector {
             var a = src.from[i]
             var b = src.to[i]
             if (b - a > MAX_TITLE_LEN + 8) continue          // 긴 줄은 제목일 수 없다
-            while (a < b && src.chars[a].isWhitespace()) a++  // trim
-            while (b > a && src.chars[b - 1].isWhitespace()) b--
+            while (a < b && isEdgeSpace(src.chars[a])) a++    // trim
+            while (b > a && isEdgeSpace(src.chars[b - 1])) b--
             if (a == b || b - a > MAX_TITLE_LEN) continue
 
             if (n == lineNo.size) {
@@ -510,6 +524,39 @@ object ChapterDetector {
 
         val best = candidates.getOrNull(chosen)
         if (best != null) {
+            // 번호가 빠진 자리가 어디인지, 그 자리 줄이 어떻게 생겼는지가 거의 항상 답이다
+            val nums = best.hits.mapNotNull { it.num }
+            if (nums.size >= 2) {
+                val have = nums.toHashSet()
+                val missing = (nums.first()..nums.last()).filter { it !in have }
+                append("번호 ${nums.first()}~${nums.last()} · 검출 ${nums.size}개 · 빠진 번호 ${missing.size}개")
+                if (missing.isNotEmpty()) {
+                    append(": ")
+                    append(missing.take(20).joinToString(", "))
+                    if (missing.size > 20) append(" …")
+                }
+                append("\n\n")
+
+                for (m in missing.take(3)) {
+                    val prev = best.hits.lastOrNull { (it.num ?: -1) < m }
+                    val next = best.hits.firstOrNull { (it.num ?: Int.MAX_VALUE) > m }
+                    val from = prev?.line ?: 0
+                    val to = (next?.line ?: lines.size).coerceAtMost(lines.size)
+                    append("${m}번이 있어야 할 자리 (줄 $from~$to) 에서 '$m' 이 든 짧은 줄:\n")
+                    var found = 0
+                    for (i in from until to) {
+                        if (found >= 4) break
+                        val t = lines[i].trim()
+                        if (t.isNotEmpty() && t.length <= 90 && t.contains(m.toString())) {
+                            append("  [$i] ${cut(t, 90)}\n")
+                            found++
+                        }
+                    }
+                    if (found == 0) append("  (찾지 못함 — 그 번호가 든 짧은 줄이 없음)\n")
+                    append("\n")
+                }
+            }
+
             append("검출된 제목 앞 12개:\n")
             best.hits.take(12).forEach { append("  [줄 ${it.line}] ${cut(it.title)}\n") }
             if (best.hits.size > 12) {
