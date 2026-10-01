@@ -103,7 +103,10 @@ object ChapterDetector {
         //   1. 죽음-01-          < 68. 새터섹터-31- >
         Pattern(
             "숫자 + 점", "<＜〈",
-            Regex("""^\s*[<＜〈]?\s*(\d+)\s*[.、．](?:\s+\S|(?!\d)\S)"""),
+            // 꺾쇠로 감싸 > 로 닫힌 줄은 제목이 확실하니 점 대신 쓴 오타(, -)도 받는다:
+            //   < 142- 낭만의 캠퍼스-11- >   < 433, 도쿄 핫-17- >
+            // 맨 줄에서는 받지 않는다. 본문의 '2, 3일 뒤' 같은 줄이 걸린다.
+            Regex("""^\s*[<＜〈]?\s*(\d+)\s*(?:[.、．](?:\s+\S|(?!\d)\S)|[,，\-–](?=.*[>＞〉]\s*$)\s*\S)"""),
             digits = true
         ),
         // #1 - 개같이 멸망   #12  —  샵 뒤에 공백이 없는 형식이 흔하다.
@@ -568,7 +571,7 @@ object ChapterDetector {
                 }
                 append("\n\n")
 
-                for (m in missing.take(3)) {
+                for (m in missing.take(8)) {
                     val prev = best.hits.lastOrNull { (it.num ?: -1) < m }
                     val next = best.hits.firstOrNull { (it.num ?: Int.MAX_VALUE) > m }
                     val from = prev?.line ?: 0
