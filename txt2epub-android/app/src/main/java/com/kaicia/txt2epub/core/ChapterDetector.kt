@@ -284,6 +284,78 @@ object ChapterDetector {
         return Lines(src.chars, lineNo, from, to, n)
     }
 
+    /** 한 빈자리에서 찾아볼 최대 번호 수. 이보다 크게 비면 원본에 정말 없는 것이다. */
+    private const val MAX_GAP = 10
+
+    /**
+     * 번호 사이 빈자리를 메운다.
+     *
+     * 패턴은 형식이 조금만 달라도 놓친다. 원본 오타가 그렇다:
+     *   < 938 여름 방학-30- >     2018 ex wife-93-      (점이 빠짐)
+     * 그런데 937과 939 사이라면 찾을 것이 정해져 있다. '938'로 시작하는 짧은 줄 하나다.
+     * 구분자가 어떻게 생겼든 번호와 자리가 맞으면 제목으로 본다.
+     *
+     * 번호 뒤에는 공백이나 구분 기호가 와야 한다. '2018년에' 같은 본문 줄은 걸리지 않는다.
+     */
+    private fun fillGaps(hits: List<Hit>, lines: Lines): List<Hit> {
+        if (hits.count { it.num != null } < hits.size * 0.8) return hits
+        val out = ArrayList<Hit>(hits.size + 16)
+        for (k in hits.indices) {
+            val a = hits[k]
+            out.add(a)
+            val b = hits.getOrNull(k + 1) ?: continue
+            val na = a.num ?: continue
+            val nb = b.num ?: continue
+            val gap = nb - na - 1
+            if (gap < 1 || gap > MAX_GAP) continue
+
+            var from = firstAfter(lines, a.line)
+            var want = na + 1
+            while (want < nb && from < lines.n && lines.lineNo[from] < b.line) {
+                val at = findNumbered(lines, from, b.line, want)
+                if (at < 0) { want++; continue }
+                out.add(Hit(lines.lineNo[at], String(lines.chars, lines.from[at], lines.to[at] - lines.from[at]), want))
+                from = at + 1
+                want++
+            }
+        }
+        return out
+    }
+
+    /** lineNo 가 [line] 보다 큰 첫 자리. lineNo 는 오름차순이다. */
+    private fun firstAfter(lines: Lines, line: Int): Int {
+        var lo = 0
+        var hi = lines.n
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (lines.lineNo[mid] <= line) lo = mid + 1 else hi = mid
+        }
+        return lo
+    }
+
+    /** [from] 부터 [endLine] 앞까지에서 정확히 [want] 로 시작하는 줄을 찾는다. */
+    private fun findNumbered(lines: Lines, from: Int, endLine: Int, want: Int): Int {
+        val c = lines.chars
+        var k = from
+        while (k < lines.n && lines.lineNo[k] < endLine) {
+            var i = lines.from[k]
+            val end = lines.to[k]
+            if (i < end && (c[i] == '<' || c[i] == '＜' || c[i] == '〈')) {
+                i++
+                while (i < end && isSp(c[i])) i++
+            }
+            var j = i
+            var v = 0
+            while (j < end && isNum(c[j]) && j - i < 7) { v = v * 10 + (c[j] - '0'); j++ }
+            if (j > i && v == want && j < end && (j - i) < 7) {
+                val next = c[j]
+                if (isSp(next) || next in ".,、．，-–—:)>]") return k
+            }
+            k++
+        }
+        return -1
+    }
+
     /**
      * `< 제목 > 끝` 처럼 화 끝을 알리는 줄인지 본다.
      *
@@ -378,9 +450,10 @@ object ChapterDetector {
         }
         if (raw.size < 2) return null
 
-        val hits = refine(raw)
-        if (hits.size < 2) return null
-        val dropped = raw.size - hits.size
+        val refined = refine(raw)
+        if (refined.size < 2) return null
+        val dropped = raw.size - refined.size
+        val hits = fillGaps(refined, lines)
 
         // 챕터별 크기
         val sizes = DoubleArray(hits.size) { k ->
