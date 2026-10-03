@@ -108,6 +108,15 @@ fun MainScreen(vm: MainViewModel) {
             vm.clearError()
         }
     }
+    // 변환 중에는 화면이 꺼지지 않게 한다
+    val activity = ctx as? android.app.Activity
+    DisposableEffect(s.busy) {
+        val w = activity?.window
+        if (s.busy) w?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else w?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { }
+    }
+
     LaunchedEffect(s.done) {
         if (s.done.isNotBlank()) {
             snackbar.showSnackbar(s.done)

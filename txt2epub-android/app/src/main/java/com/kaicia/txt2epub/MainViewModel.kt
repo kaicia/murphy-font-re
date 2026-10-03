@@ -636,36 +636,75 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         coverMime = s.coverMime
     )
 
+    /**
+     * EPUB 한 권을 임시 파일에 다 쓰고, 검사를 통과하면 그때 [write] 로 넘긴다.
+     *
+     * 예전에는 저장 위치에 바로 썼다. 쓰는 도중에 앱이 꺼지면 앞부분만 남은
+     * 깨진 EPUB이 그대로 남았다(3000화 중 2468화에서 끊긴 파일이 실제로 나왔다).
+     * 이제는 끝까지 쓰고 확인한 것만 저장 위치에 나타난다.
+     */
+    private fun writeVerified(
+        ctx: Application,
+        part: List<ChapterDetector.Chapter>,
+        meta: EpubWriter.Meta,
+        write: (java.io.File) -> Unit,
+        progress: (Int, Int) -> Unit
+    ) {
+        val tmp = java.io.File(ctx.cacheDir, "export-${System.nanoTime()}.epub")
+        try {
+            java.io.FileOutputStream(tmp).use { out ->
+                EpubWriter.write(out = out, chapters = part, lines = lines, meta = meta, onProgress = progress)
+            }
+            EpubWriter.verify(tmp, part.size)
+            write(tmp)
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    private fun copyTo(resolver: android.content.ContentResolver, from: java.io.File, target: Uri) {
+        (resolver.openOutputStream(target, "wt") ?: throw IllegalStateException("저장 위치를 열 수 없습니다"))
+            .use { out -> from.inputStream().use { it.copyTo(out, 1 shl 16) } }
+    }
+
+    private fun failMessage(t: Throwable): String = when (t) {
+        is OutOfMemoryError -> "메모리가 부족합니다. '6. 나눠 저장'으로 여러 권으로 나눠 보세요."
+        else -> "생성 실패: ${t.message ?: t.javaClass.simpleName}"
+    }
+
     /** 한 권으로 저장한다. SAF가 미리 만들어 둔 파일에 쓴다. */
     fun export(target: Uri) {
         val s = _ui.value
         if (s.chapters.isEmpty()) return
+        val ctx = getApplication<Application>()
         _ui.value = s.copy(busy = true, progress = 0f, status = "EPUB을 만드는 중…", error = "", done = "")
+        ExportService.start(ctx)
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val resolver = getApplication<Application>().contentResolver
-                    resolver.openOutputStream(target)?.use { out ->
-                        EpubWriter.write(
-                            out = out,
-                            chapters = s.chapters,
-                            lines = lines,
-                            meta = metaFor(s, 1, 1)
-                        ) { doneCount, total ->
+                    writeVerified(ctx, s.chapters, metaFor(s, 1, 1),
+                        write = { tmp ->
+                            _ui.value = _ui.value.copy(status = "저장 위치로 옮기는 중…")
+                            copyTo(ctx.contentResolver, tmp, target)
+                        },
+                        progress = { doneCount, total ->
                             _ui.value = _ui.value.copy(
                                 progress = doneCount.toFloat() / total,
                                 status = "본문 작성 중… $doneCount / $total"
                             )
-                        }
-                    } ?: throw IllegalStateException("출력 스트림을 열 수 없습니다")
+                        })
                 }
                 _ui.value = _ui.value.copy(
                     busy = false, progress = 1f,
-                    status = "완료 · 챕터 ${s.chapters.size}개",
+                    status = "완료 · 챕터 ${s.chapters.size}개 · 검사 통과",
                     done = "EPUB 1개를 저장했습니다."
                 )
-            } catch (e: Exception) {
-                _ui.value = _ui.value.copy(busy = false, error = "생성 실패: ${e.message}")
+            } catch (t: Throwable) {
+                // 미리 만들어진 빈 파일이나 반쯤 쓴 파일을 남기지 않는다
+                runCatching { android.provider.DocumentsContract.deleteDocument(ctx.contentResolver, target) }
+                _ui.value = _ui.value.copy(busy = false, status = "", error = failMessage(t))
+            } finally {
+                ExportService.stop(ctx)
             }
         }
     }
@@ -680,11 +719,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (s.chapters.isEmpty()) return
         val parts = chunks(s)
         val names = outputNames()
+        val ctx = getApplication<Application>()
         _ui.value = s.copy(busy = true, progress = 0f, status = "EPUB을 만드는 중…", error = "", done = "")
+        ExportService.start(ctx)
 
         viewModelScope.launch {
+            val made = ArrayList<Uri>()
             try {
-                val ctx = getApplication<Application>()
                 val dir = DocumentFile.fromTreeUri(ctx, treeUri)
                     ?: throw IllegalStateException("폴더를 열 수 없습니다")
                 if (!dir.canWrite()) throw IllegalStateException("이 폴더에 쓸 권한이 없습니다")
@@ -695,36 +736,38 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.IO) {
                     parts.forEachIndexed { i, part ->
                         val name = names.getOrElse(i) { "book-${i + 1}.epub" }
-                        // 같은 이름이 있으면 SAF가 '(1)'을 붙인다. 덮어쓰지 않는다.
-                        val file = dir.createFile("application/epub+zip", name)
-                            ?: throw IllegalStateException("파일을 만들 수 없습니다: $name")
-
-                        ctx.contentResolver.openOutputStream(file.uri)?.use { out ->
-                            EpubWriter.write(
-                                out = out,
-                                chapters = part,
-                                lines = lines,
-                                meta = metaFor(s, i + 1, parts.size)
-                            ) { doneCount, _ ->
+                        writeVerified(ctx, part, metaFor(s, i + 1, parts.size),
+                            write = { tmp ->
+                                // 다 쓰고 확인한 다음에야 파일을 만든다. 깨진 권이 폴더에 남지 않는다.
+                                val file = dir.createFile("application/epub+zip", name)
+                                    ?: throw IllegalStateException("파일을 만들 수 없습니다: $name")
+                                made.add(file.uri)
+                                copyTo(ctx.contentResolver, tmp, file.uri)
+                            },
+                            progress = { doneCount, _ ->
                                 val overall = (written + doneCount).toFloat() / totalChapters
                                 _ui.value = _ui.value.copy(
                                     progress = overall.coerceIn(0f, 1f),
                                     status = "${i + 1}/${parts.size}권 작성 중… $doneCount / ${part.size}"
                                 )
-                            }
-                        } ?: throw IllegalStateException("출력 스트림을 열 수 없습니다: $name")
-
+                            })
                         written += part.size
                     }
                 }
 
                 _ui.value = _ui.value.copy(
                     busy = false, progress = 1f,
-                    status = "완료 · ${parts.size}권 · 챕터 ${s.chapters.size}개",
+                    status = "완료 · ${parts.size}권 · 챕터 ${s.chapters.size}개 · 검사 통과",
                     done = "EPUB ${parts.size}개를 저장했습니다."
                 )
-            } catch (e: Exception) {
-                _ui.value = _ui.value.copy(busy = false, error = "생성 실패: ${e.message}")
+            } catch (t: Throwable) {
+                // 마지막에 만들다 만 권만 지운다. 앞서 끝까지 쓴 권은 온전하다.
+                made.lastOrNull()?.let { u ->
+                    runCatching { android.provider.DocumentsContract.deleteDocument(ctx.contentResolver, u) }
+                }
+                _ui.value = _ui.value.copy(busy = false, status = "", error = failMessage(t))
+            } finally {
+                ExportService.stop(ctx)
             }
         }
     }

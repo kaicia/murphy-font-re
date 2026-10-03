@@ -210,4 +210,28 @@ object EpubWriter {
         zip.write(bytes)
         zip.closeEntry()
     }
+
+    /**
+     * 다 쓴 파일이 온전한 EPUB인지 확인한다. 아니면 이유를 담아 예외를 던진다.
+     *
+     * zip은 맨 마지막에 목록(central directory)을 쓴다. 쓰는 도중에 앱이 꺼지면
+     * 앞부분만 남고 목록이 없는 파일이 되어 뷰어가 'EPUB이 아니다'라고 한다.
+     * 실제로 3000화 중 2468화까지만 쓰이고 끊긴 파일이 있었다.
+     */
+    fun verify(file: java.io.File, chapters: Int) {
+        val zip = try {
+            java.util.zip.ZipFile(file)
+        } catch (e: Exception) {
+            throw IllegalStateException("파일이 끝까지 쓰이지 않았습니다 (zip 목록 없음)")
+        }
+        zip.use { z ->
+            val first = z.entries().asSequence().firstOrNull()?.name
+            check(first == "mimetype") { "mimetype 이 첫 항목이 아닙니다" }
+            for (need in listOf("META-INF/container.xml", "OEBPS/content.opf", "OEBPS/nav.xhtml", "OEBPS/toc.ncx")) {
+                check(z.getEntry(need) != null) { "$need 가 없습니다" }
+            }
+            val n = z.entries().asSequence().count { it.name.matches(Regex("""OEBPS/ch\d+\.xhtml""")) }
+            check(n == chapters) { "챕터가 $n 개뿐입니다 (예상 $chapters)" }
+        }
+    }
 }
